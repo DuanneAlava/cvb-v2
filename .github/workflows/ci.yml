@@ -1,0 +1,101 @@
+name: CampusVoiceBox CI
+
+# Runs on every push and pull request against main.
+# This is the "CI/CD pipeline skeleton" checklist item: it proves the
+# frontend builds, the backend starts and can talk to a real Postgres
+# database, and both Docker images build cleanly. It stops short of an
+# actual deploy step (Vercel/Netlify/EC2/etc.) - add that job once you have
+# hosting decided, following the commented example at the bottom.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  frontend:
+    name: Frontend - install & build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build --if-present
+        env:
+          CI: true
+
+  backend:
+    name: Backend - install & migrate against a real Postgres
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: cvb_user
+          POSTGRES_PASSWORD: cvb_password
+          POSTGRES_DB: campusvoicebox
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cvb_user -d campusvoicebox"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: cvb_user
+      PGPASSWORD: cvb_password
+      PGDATABASE: campusvoicebox
+      JWT_SECRET: ci-test-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - name: Run migrations against the CI database
+        run: npm run db:migrate
+      - name: Seed sample data
+        run: npm run db:seed
+      - name: Boot the server and hit /api/health
+        run: |
+          npm start &
+          npx wait-on http://localhost:4000/api/health -t 15000
+          curl -f http://localhost:4000/api/health
+
+  docker-build:
+    name: Docker images build cleanly
+    runs-on: ubuntu-latest
+    needs: [frontend, backend]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build backend image
+        run: docker build -t campusvoicebox-backend ./backend
+      - name: Build frontend image
+        run: docker build -t campusvoicebox-frontend ./frontend
+
+  # --- Deploy stage (skeleton only - fill in once hosting is chosen) ---
+  # deploy:
+  #   name: Deploy
+  #   runs-on: ubuntu-latest
+  #   needs: [docker-build]
+  #   if: github.ref == 'refs/heads/main'
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     # Vercel/Netlify (frontend): use their official deploy-action here.
+  #     # Docker -> EC2 (backend): docker push to a registry, then SSH in
+  #     # and `docker compose pull && docker compose up -d`.

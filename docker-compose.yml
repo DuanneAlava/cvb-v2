@@ -1,0 +1,61 @@
+# Brings up the whole 30%-progress stack with one command:
+#   docker compose up --build
+#
+# - db:       Postgres 16, with the schema + seed data loaded automatically
+#             the first time the volume is created (see db/init/)
+# - backend:  Express API on http://localhost:4000
+# - frontend: React dev server on http://localhost:3000
+#
+# This is a LOCAL/DEV setup (hot reload, no build optimisation). It is not
+# meant to be deployed as-is - see GUIDE.md for what changes for production.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cvb_user
+      POSTGRES_PASSWORD: cvb_password
+      POSTGRES_DB: campusvoicebox
+    ports:
+      - "5432:5432"
+    volumes:
+      - cvb_pg_data:/var/lib/postgresql/data
+      - ./backend/src/models/schema.sql:/docker-entrypoint-initdb.d/1-schema.sql:ro
+      - ./backend/src/models/seed.sql:/docker-entrypoint-initdb.d/2-seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cvb_user -d campusvoicebox"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env.docker
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    environment:
+      - REACT_APP_API_URL=http://localhost:4000/api
+      - WATCHPACK_POLLING=true
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+
+volumes:
+  cvb_pg_data:
