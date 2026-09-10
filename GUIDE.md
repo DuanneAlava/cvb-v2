@@ -28,10 +28,10 @@ only as frontend mock behaviour before; they now have a real backend behind them
 
 | Checklist item | Where it lives now |
 |---|---|
-| Landing page with navbar & sections | `src/pages/Home.jsx` - hero, category filter pills, search box, post list |
+| Landing page with navbar & sections | `src/pages/Home.jsx` - hero, then the full "Browse suggestions" board. The category pills and search box that used to sit between them now live in the navbar |
 | Basic routing | `src/App.js` using `react-router-dom` (`/`, `/login`, `/signup`, catch-all redirect) |
-| Initial UI components | `src/components/` - `Button`, `TextField`, `Navbar`, `Footer`, `Logo`, `AuthCard`, `SuggestionCard`, `PostModal` |
-| Responsive layout | Tailwind CSS throughout; the navbar collapses into a burger menu below the `lg` breakpoint |
+| Initial UI components | `src/components/` - `Button`, `TextField`, `Navbar`, `SearchBar`, `ProfileMenu`, `ConfirmDialog`, `Footer`, `Logo`, `AuthCard`, `SuggestionCard`, `PostModal` |
+| Responsive layout | Tailwind CSS throughout; below the `sm` breakpoint the navbar drops its search box onto a second row and shows the logo mark without the wordmark |
 | **Fade-in animation (new)** | See section 4 below |
 
 ### Backend Foundations (10%)
@@ -140,6 +140,73 @@ component.
 
 ---
 
+## 4b. The Admin Panel
+
+One account system, two dashboards. There is no separate admin login: everybody
+signs in at `/login`, and the `role` on the account decides where they land.
+
+```
+LOGIN -> verify email + password -> read role
+           |
+           +-- admin          --> /admin/dashboard
+           +-- student / user --> /student/dashboard
+```
+
+There is one admin role, and it holds every permission - changing roles,
+deleting accounts, resetting the demo data included. What keeps those powers
+in check is not a second tier above it but the self-checks: an account can
+never change its own role, suspend itself or delete itself.
+
+**Demo accounts** (seeded by `frontend/src/services/store.js`, password
+`campus123` for all of them - delete them before this is used for real):
+
+| Role | Name | Email |
+|---|---|---|
+| Admin | Kenn Dave Alava | admin@ollcf.edu.ph |
+| Student | Juan Dela Cruz | juan.delacruz@ollcf.edu.ph |
+
+### What is where
+
+| Area | File |
+|---|---|
+| Roles and permissions | `frontend/src/data/roles.js` |
+| Statuses, priorities, types, departments, notification types | `frontend/src/data/workflow.js` |
+| The shared data layer both sides read | `frontend/src/services/store.js` |
+| Route guards | `frontend/src/components/RequireAuth.jsx` |
+| Admin shell and sidebar | `frontend/src/components/admin/AdminLayout.jsx` |
+| Reusable table / modal / charts / badges | `frontend/src/components/admin/` |
+| Admin pages | `frontend/src/pages/admin/` |
+| Admin API | `backend/src/routes/adminRoutes.js` |
+
+### Adding things later
+
+The panel is driven by data files rather than hard-coded lists, so:
+
+- **A new category** in `data/categories.js` appears in the post form, the
+  navbar dropdown, the admin filters and the analytics charts.
+- **A new status** in `data/workflow.js` gets a badge colour, a place in the
+  filter dropdowns, and its own set of "move it to" buttons in the review
+  dialog - the dialog builds those from the status's own `next` list.
+- **A new submission type** joins the right monitoring page through its
+  `group`, and gets the assignment controls if `needsAssignment` is true.
+- **A new profile field** goes in two lists - `PROFILE_FIELDS` in
+  `pages/student/Account.jsx` and `EDITABLE_FIELDS` in
+  `pages/admin/UserProfile.jsx` - and both sides handle it.
+- **A new admin page** is a `<Route>` inside the existing
+  `<RequirePermission>` block in `App.js`, so it cannot be added unguarded.
+
+### The moderation flow
+
+Everything a student submits starts at `pending` and is invisible on the public
+board. An administrator approves it, rejects it with a reason, or asks for a
+revision. Approving publishes it; all three notify the student and write an
+audit entry, in the same transaction as the status change.
+
+Concerns go further: approved -> assigned to a department -> in progress ->
+resolved with a written summary, which is sent to the student.
+
+---
+
 ## 5. Connecting frontend to backend (the next step after 30%)
 
 Right now the frontend and backend run side by side but the frontend doesn't call the
@@ -147,20 +214,33 @@ backend yet - it still uses its mock data, exactly as it did in your upload. Thi
 intentional: it keeps the frontend demoable with zero setup for a panel presentation.
 
 When you're ready to wire them together, a small API client is already prepared at
-`frontend/src/services/api.js` (register, login, me, getCategories, getPosts, createPost,
-toggleVote - matching every backend endpoint 1:1). The swap is:
+`frontend/src/services/api.js` - the student endpoints, plus an `api.admin.*` group
+matching every route in `backend/src/routes/adminRoutes.js` one for one. The swap is:
 
 1. Copy `frontend/.env.example` to `.env.local` and set `REACT_APP_API_URL`.
 2. In `AuthContext.jsx`, replace the `localStorage` read/write in `signup`/`login`/`logout`
    with calls to `api.register` / `api.login`, and store the returned JWT under
    `localStorage.setItem('cvb_token', token)` instead of the current session key.
-3. In `Home.jsx`, replace `useState(SEED_SUGGESTIONS)` with an `api.getPosts()` call inside a
-   `useEffect`, and point `addSuggestion`/`toggleVote` at `api.createPost` /
-   `api.toggleVote`.
+3. In `services/boardStore.js`, replace the `localStorage` reads and writes inside
+   `readBoard` / `writeBoard` with `api.getPosts()` and `api.createPost` / `api.toggleVote`.
+   `Home.jsx` only talks to the `useBoard()` hook, so it does not change at all - and the
+   BroadcastChannel wiring can stay, or be swapped for websockets to get live votes across
+   different computers rather than just across tabs.
 
-Everything on the backend already returns data shaped exactly like `SEED_SUGGESTIONS` (same
-field names: `type`, `category`, `author`, `message`, `votes`, `createdAt`, plus `hasVoted`),
-so this should be a drop-in swap rather than a rewrite.
+Two things to carry over to the server when you do:
+
+- **The rudeness filter must run there too.** `services/moderation.js` runs in the browser,
+  which is fine for telling a student off politely, but anyone can bypass a client-side
+  check by calling the API directly. Port the same word lists into the `POST /posts`
+  handler.
+- **`authorEmail` must never leave the server.** Anonymous posts carry it so that
+  "Your Suggestions" can still find them; if the API returns it, anonymous posting is
+  anonymous in name only.
+
+The backend returns posts with the same core field names (`type`, `category`, `author`,
+`message`, `createdAt`, plus `hasVoted`), so this stays a contained swap rather than a
+rewrite. Note the frontend no longer keeps a `votes` number on the post itself - it counts
+the vote records instead, which is what stops counts drifting.
 
 ---
 
@@ -175,8 +255,10 @@ campusvoicebox/
 │   │   ├── components/         # Navbar, Header, Button, PostModal, SuggestionCard, Reveal...
 │   │   ├── pages/               # Home, Login, Signup
 │   │   ├── context/AuthContext.jsx
-│   │   ├── data/                 # categories.js, suggestions.js (mock data)
-│   │   ├── services/api.js       # ready for when the frontend switches to the real API
+│   │   ├── data/                 # categories.js, suggestions.js (seed), blockedWords.js
+│   │   ├── services/             # boardStore.js (saved + live votes), moderation.js
+│   │   │                         # (rudeness filter), attachments.js (photo shrinking),
+│   │   │                         # api.js (ready for the real API)
 │   │   └── assets/campus-hero.jpg
 │   ├── tailwind.config.js
 │   └── package.json
@@ -199,8 +281,27 @@ campusvoicebox/
 
 Being upfront about scope, so this isn't oversold as more finished than it is:
 
-- **No real image/file attachments yet** - your memory notes mention this is in progress
-  elsewhere; the schema here has no `attachments` table yet.
+- **Attachments are frontend-only** - students can attach photos and files, and photos are
+  shrunk to roughly 1000px before being saved so they fit in browser storage
+  (`frontend/src/services/attachments.js`). The database schema has no `attachments` table
+  yet, so nothing is stored server-side.
+- **The rudeness filter is frontend-only** - `frontend/src/services/moderation.js` blocks
+  swearing and name-calling in English and Filipino before a post is saved, and the board
+  filters anything rude out again when it loads. A client-side check can be bypassed by
+  calling the API directly, so the same word lists need porting into `POST /posts`.
+- **Everything is live across tabs, not across computers** -
+  `frontend/src/services/store.js` keeps the whole platform in browser storage and
+  pushes every change to other open tabs instantly, so an approval in the admin
+  panel lands on the student's board without a refresh. Two people on two laptops
+  still see separate copies until the backend is wired in.
+- **The admin panel's permission checks are frontend-only in this build** - and
+  that is the one item on this list that must not ship. The route guards and role
+  checks run in the visitor's browser, where a stored account can simply be edited,
+  so they decide what the interface DRAWS and nothing more. The server-side half
+  already exists - `requirePermission` in `backend/src/middleware/auth.js`, applied
+  to all 14 routes in `adminRoutes.js`, re-reading the role from the database on
+  every request - and it is what actually protects anything. Point `store.js` at
+  the API before this is used for real.
 - **No admin/staff role** - `users` table has no `role` column; every account is a student.
   Add a `role VARCHAR(20) DEFAULT 'student'` column when you build the staff-reply feature.
 - **No post status transitions in the UI** - the `posts.status` column

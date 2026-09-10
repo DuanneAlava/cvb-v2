@@ -1,0 +1,3 @@
+# macOS resource-fork and Finder files (created on FAT/exFAT drives)
+._*
+.DS_Store

@@ -1,52 +1,44 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { CATEGORIES } from '../data/categories.js';
-import { SEED_SUGGESTIONS } from '../data/suggestions.js';
+import { labelForSlug } from '../data/categories.js';
+import { PERMISSIONS } from '../data/roles.js';
+import { kindInfo } from '../data/workflow.js';
 import { useAuth } from '../context/AuthContext.jsx';
+import { useStore, publicPosts, voteCount, authorLabel } from '../services/store.js';
 import Header from '../components/Header.jsx';
 import PostModal from '../components/PostModal.jsx';
 import SuggestionCard from '../components/SuggestionCard.jsx';
 import Reveal from '../components/Reveal.jsx';
 
 /*
- * The landing page.
+ * The public board.
  *
- * Reading down the page:
- *   1. the hero - the quote and the two centred buttons
- *   2. the category filter pills
- *   3. the search box
- *   4. "Browse suggestions" - the list of posts, filtered by the two controls above
+ * Two things changed here when moderation arrived:
+ *
+ *   1. The board reads publicPosts() rather than every post. A submission only
+ *      appears once an administrator has approved it, so the board can no
+ *      longer be used to publish something straight to the whole campus.
+ *
+ *   2. Author names come from authorLabel(), which resolves the real name only
+ *      for somebody holding VIEW_IDENTITY. Anonymous stays anonymous here even
+ *      when an admin is the one reading the page.
+ *
+ * The filters still live in the address bar, set by the navbar search box and
+ * the profile menu, so this page reads them rather than owning the controls.
  */
 function Home() {
-  // Every post on the board. New posts from the pop-up are added to the front.
-  const [suggestions, setSuggestions] = useState(SEED_SUGGESTIONS);
+  const { user, can } = useAuth();
+  const store = useStore(user);
 
-  // The ids of posts this student has voted for, so a vote can be taken back.
-  const [votedIds, setVotedIds] = useState([]);
-
-  // What the student has typed into the search box.
-  const [query, setQuery] = useState('');
-
-  // Which pop-up is open: null (none), 'suggestion', or 'voice'.
   const [modalMode, setModalMode] = useState(null);
+  const [error, setError] = useState('');
 
-  // The chosen category lives in the address bar, e.g. /?category=safety.
-  // Keeping it there means the navbar links and these pills stay in step,
-  // and a filtered view can be copied and shared as a link.
   const [searchParams, setSearchParams] = useSearchParams();
-  const activeCategory = searchParams.get('category'); // null means "All"
+  const activeCategory = searchParams.get('category');
+  const query = searchParams.get('q') ?? '';
+  const mine = searchParams.get('mine');
 
-  const { user } = useAuth();
   const navigate = useNavigate();
-
-  // Change the category filter. Passing null clears it back to "All".
-  function selectCategory(slug) {
-    if (slug) {
-      setSearchParams({ category: slug });
-    } else {
-      setSearchParams({});
-    }
-  }
 
   // Posting requires an account, so send guests to the login page first.
   function openModal(mode) {
@@ -57,164 +49,156 @@ function Home() {
     setModalMode(mode);
   }
 
-  // Add a finished post from the pop-up to the top of the board.
-  function addSuggestion({ type, category, message }) {
-    const newPost = {
-      id: Date.now(), // the current time in milliseconds makes a simple unique id
-      type,
-      category,
-      author: user ? user.name : 'Anonymous student',
-      message,
-      votes: 1, // a new post starts with the author's own vote
-      createdAt: new Date().toISOString().slice(0, 10), // keep only the YYYY-MM-DD part
-    };
+  function addSubmission({ kind, category, title, message, anonymous, attachments }) {
+    try {
+      const result = store.createPost({
+        kind,
+        category,
+        title,
+        message,
+        anonymous,
+        attachments,
+        authorId: user.id,
+      });
 
-    setSuggestions([newPost, ...suggestions]);
-    setVotedIds([...votedIds, newPost.id]);
+      setError(
+        result?.error ??
+          // Nothing appears on the board straight away any more, so say so
+          // rather than letting the student think their post vanished.
+          'Thanks - your submission has been sent for review. You can follow it from your dashboard.'
+      );
+    } catch (failure) {
+      setError(failure.message);
+    }
   }
 
-  // Add or remove this student's vote on one post.
-  function toggleVote(id) {
-    // Guests cannot vote either, so send them to log in.
+  function handleVote(id) {
     if (!user) {
       navigate('/login');
       return;
     }
 
-    const alreadyVoted = votedIds.includes(id);
+    if (!can(PERMISSIONS.VOTE)) {
+      setError('Your account is suspended, so voting is turned off.');
+      return;
+    }
 
-    // Move the vote count up by one, or back down if the vote is being taken away.
-    setSuggestions(
-      suggestions.map((item) =>
-        item.id === id ? { ...item, votes: item.votes + (alreadyVoted ? -1 : 1) } : item
-      )
-    );
-
-    setVotedIds(
-      alreadyVoted ? votedIds.filter((votedId) => votedId !== id) : [...votedIds, id]
-    );
+    try {
+      store.toggleVote(id, user.id);
+      setError('');
+    } catch (failure) {
+      setError(failure.message);
+    }
   }
 
-  /*
-   * The list actually shown on screen, after both filters are applied.
-   * useMemo re-runs this only when one of the values in the list at the end
-   * changes, instead of on every single render.
-   */
-  const visibleSuggestions = useMemo(() => {
+  function clearFilters() {
+    setSearchParams({});
+  }
+
+  const visiblePosts = useMemo(() => {
     const search = query.trim().toLowerCase();
 
-    return suggestions.filter((item) => {
-      // Keep the post if no category is chosen, or if its category matches.
-      const matchesCategory = !activeCategory || item.category === activeCategory;
+    return publicPosts(store.db)
+      .filter((post) => {
+        const matchesCategory = !activeCategory || post.category === activeCategory;
 
-      // Keep the post if the search box is empty, or if the text appears in the message.
-      const matchesSearch = !search || item.message.toLowerCase().includes(search);
+        const matchesSearch =
+          !search ||
+          post.message.toLowerCase().includes(search) ||
+          (post.title ?? '').toLowerCase().includes(search);
 
-      return matchesCategory && matchesSearch;
-    });
-  }, [suggestions, activeCategory, query]);
+        // "Your Suggestions" / "Your Voice Outs" from the profile menu. A
+        // voice out is a post in the concern family - ?mine=suggestion or
+        // ?mine=concern - read off the kind, which is the one classification
+        // a post has.
+        const matchesMine =
+          !mine || (user && post.authorId === user.id && kindInfo(post.kind).group === mine);
+
+        return matchesCategory && matchesSearch && matchesMine;
+      })
+      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  }, [store.db, activeCategory, query, mine, user]);
+
+  /*
+   * THE BOARD-WIDE TALLY.
+   *
+   * Counted across every published post, NOT just the ones currently on
+   * screen. A share that changed depending on which category filter happened
+   * to be applied would be meaningless - "31% of all votes" has to mean the
+   * same thing however the reader arrived at the card.
+   */
+  const tally = useMemo(() => {
+    const counts = publicPosts(store.db).map((post) => voteCount(store.db, post.id));
+    return {
+      total: counts.reduce((sum, count) => sum + count, 0),
+      // Math.max of an empty list is -Infinity, so seed it with 0.
+      max: Math.max(0, ...counts),
+    };
+  }, [store.db]);
+
+  const filterSummary = [
+    mine === 'suggestion' && 'your suggestions',
+    mine === 'concern' && 'your voice outs',
+    activeCategory && labelForSlug(activeCategory),
+    query.trim() && `"${query.trim()}"`,
+  ].filter(Boolean);
 
   return (
     <>
-      {/* 1. THE HERO - the quote plus the two centred buttons. */}
       <Header
         onPostSuggestion={() => openModal('suggestion')}
         onVoiceOut={() => openModal('voice')}
       />
 
-      {/* 2 and 3. THE FILTER BAR - category pills with the search box underneath. */}
-      <div className="border-b border-slate-200 bg-white">
-        <div className="mx-auto max-w-7xl px-4 py-4 sm:px-6">
-          {/*
-            THE CATEGORY PILLS.
-            `flex-wrap` lets them flow onto a second line on narrow screens
-            instead of running off the side of the page.
-          */}
-          <div className="flex flex-wrap gap-2">
-            {/* The "All" pill clears the filter and shows every post. */}
-            <button
-              type="button"
-              onClick={() => selectCategory(null)}
-              className={`rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
-                !activeCategory
-                  ? 'bg-navy-600 text-white'
-                  : 'border border-slate-200 bg-white text-slate-600 hover:border-navy-200 hover:text-navy-700'
-              }`}
-            >
-              All
-            </button>
-
-            {/* One pill for each of the six categories. */}
-            {CATEGORIES.map((category) => (
-              <button
-                key={category.slug}
-                type="button"
-                onClick={() => selectCategory(category.slug)}
-                className={`rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
-                  activeCategory === category.slug
-                    ? 'bg-navy-600 text-white'
-                    : 'border border-slate-200 bg-white text-slate-600 hover:border-navy-200 hover:text-navy-700'
-                }`}
-              >
-                {category.label}
-              </button>
-            ))}
-          </div>
-
-          {/* THE SEARCH BOX, directly under the pills. */}
-          <div className="relative mt-3">
-            {/* The magnifying glass sits inside the box on the left. */}
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
-            >
-              <circle cx="11" cy="11" r="7" />
-              <path d="m20 20-3.5-3.5" strokeLinecap="round" />
-            </svg>
-
-            <input
-              type="search"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search suggestions..."
-              aria-label="Search suggestions"
-              className="w-full rounded-lg border border-slate-300 py-2.5 pl-9 pr-3 text-sm focus:border-navy-600 focus:outline-none focus:ring-1 focus:ring-navy-600"
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* 4. BROWSE SUGGESTIONS - the list sitting under the search box. */}
-      <section className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
+      <section id="browse-suggestions" className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h2 className="text-xl font-bold text-navy-900 sm:text-2xl">Browse suggestions</h2>
-
-          {/* A running count that follows whatever filters are active. */}
           <p className="text-sm text-slate-500">
-            {visibleSuggestions.length} {visibleSuggestions.length === 1 ? 'post' : 'posts'}
-            {activeCategory && ' in this category'}
+            {visiblePosts.length} {visiblePosts.length === 1 ? 'post' : 'posts'}
           </p>
         </div>
 
-        {visibleSuggestions.length === 0 ? (
-          // Shown when the filters match nothing, so the page is never blank.
+        {filterSummary.length > 0 && (
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-slate-500">
+            <span>Showing {filterSummary.join(' · ')}</span>
+            <button
+              type="button"
+              onClick={clearFilters}
+              className="rounded-full border border-slate-300 px-3 py-1 text-xs font-medium text-navy-700 transition-colors hover:border-navy-600 hover:bg-navy-50"
+            >
+              Clear filters
+            </button>
+          </div>
+        )}
+
+        {error && (
+          <p role="status" className="mt-3 rounded-lg bg-navy-50 px-3 py-2 text-sm text-navy-800">
+            {error}
+          </p>
+        )}
+
+        {visiblePosts.length === 0 ? (
           <p className="mt-6 rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center text-slate-500">
             No posts match your search yet. Try another category, or be the first to post.
           </p>
         ) : (
-          // The posts themselves: one column on phones, two from the large breakpoint.
-          // Each card is wrapped in <Reveal> so it fades up into place the
-          // moment it scrolls into the viewport, staggered card by card.
-          <div className="mt-4 grid gap-3 lg:grid-cols-2">
-            {visibleSuggestions.map((suggestion, index) => (
-              <Reveal key={suggestion.id} delay={(index % 4) * 80}>
+          <div className="mt-4 grid items-stretch gap-3 lg:grid-cols-2">
+            {visiblePosts.map((post, index) => (
+              <Reveal key={post.id} delay={(index % 4) * 80} className="h-full">
                 <SuggestionCard
-                  suggestion={suggestion}
-                  hasVoted={votedIds.includes(suggestion.id)}
-                  onVote={toggleVote}
+                  suggestion={{
+                    ...post,
+                    // Resolved here rather than inside the card, so the card
+                    // never has to know anything about who is looking at it.
+                    author: authorLabel(store.db, post, user),
+                  }}
+                  votes={voteCount(store.db, post.id)}
+                  totalVotes={tally.total}
+                  // Ties all show the marker, which is correct - they are all
+                  // equally in front.
+                  isTopVoted={tally.max > 0 && voteCount(store.db, post.id) === tally.max}
+                  hasVoted={Boolean(user) && (store.db.votes[post.id] ?? []).includes(user.id)}
+                  onVote={handleVote}
                 />
               </Reveal>
             ))}
@@ -222,12 +206,11 @@ function Home() {
         )}
       </section>
 
-      {/* THE POP-UP. It is only added to the page while a mode is set. */}
       {modalMode && (
         <PostModal
           mode={modalMode}
           onClose={() => setModalMode(null)}
-          onSubmit={addSuggestion}
+          onSubmit={addSubmission}
         />
       )}
     </>

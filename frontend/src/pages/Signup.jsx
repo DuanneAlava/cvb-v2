@@ -3,13 +3,20 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import AuthCard from '../components/AuthCard.jsx';
 import TextField from '../components/TextField.jsx';
+import { programOptions } from '../data/programs.js';
 import Button from '../components/Button.jsx';
 
 /*
  * The sign-up page.
  *
- * It checks all four fields, creates the account, logs the new student in
- * straight away and then sends them to the landing page.
+ * It checks the fields, creates the account, signs the new student in and then
+ * sends them to the dashboard their role belongs to.
+ *
+ * WHAT ROLE A NEW ACCOUNT GETS
+ * Registering always produces a student or user account, never an admin one -
+ * an admin role can only be granted afterwards by an administrator, from the
+ * user profile page. A sign-up form that could mint administrators would make every
+ * other permission check pointless.
  */
 
 // A basic email shape check: some text, an @, some text, a dot, then more text.
@@ -26,6 +33,14 @@ function Signup() {
     email: '',
     password: '',
     confirm: '',
+
+    // The school details. Filling in a student number is what makes this a
+    // student account rather than a general user one, and it is what lets
+    // staff follow a concern up with the right person.
+    studentId: '',
+    course: '',
+    yearLevel: '',
+    section: '',
   });
 
   // One error message per field, e.g. { email: 'That does not look right' }.
@@ -77,20 +92,23 @@ function Signup() {
       return;
     }
 
-    // signup() returns an error message when the email is already taken.
-    const failure = signup({
+    const result = signup({
       name: form.name.trim(),
       email: form.email.trim(),
       password: form.password,
+      studentId: form.studentId.trim(),
+      course: form.course.trim(),
+      yearLevel: form.yearLevel.trim(),
+      section: form.section.trim(),
     });
 
-    if (failure) {
-      setErrors({ email: failure });
+    if (result.error) {
+      setErrors({ email: result.error });
       return;
     }
 
-    // Success - the new student is already logged in, so show them the board.
-    navigate('/');
+    // Success - already signed in, so straight to the right dashboard.
+    navigate(result.home, { replace: true });
   }
 
   return (
@@ -100,7 +118,10 @@ function Signup() {
       footer={
         <>
           Already have an account?{' '}
-          <Link to="/login" className="font-semibold text-navy-600 hover:underline">
+          <Link
+            to="/login"
+            className="inline-flex min-h-[44px] items-center rounded-lg px-2 font-semibold text-navy-600 hover:bg-navy-50 hover:underline"
+          >
             Log in
           </Link>
         </>
@@ -124,10 +145,52 @@ function Signup() {
           type="email"
           value={form.email}
           onChange={handleChange('email')}
-          placeholder="juandelacruz@gmail.com"
+          placeholder="juandelacruz@ollcf.edu.ph"
           autoComplete="email"
           error={errors.email}
         />
+
+        {/*
+          THE SCHOOL DETAILS. Optional, because a staff member or a visitor has
+          no student number - leaving this blank creates a general user account
+          instead of a student one. Both can post; the difference is only that
+          administrators can tell them apart when following something up.
+        */}
+        <div className="grid gap-4 sm:grid-cols-2">
+          <TextField
+            id="signup-student-id"
+            label="Student ID"
+            value={form.studentId}
+            onChange={handleChange('studentId')}
+            placeholder="2023-00145"
+            hint="Leave blank if you are not a student."
+          />
+
+          <TextField
+            id="signup-course"
+            label="Course / Program"
+            value={form.course}
+            onChange={handleChange('course')}
+            options={programOptions(form.course)}
+            hint="Leave unselected if you are not a student."
+          />
+
+          <TextField
+            id="signup-year"
+            label="Year level"
+            value={form.yearLevel}
+            onChange={handleChange('yearLevel')}
+            placeholder="3rd Year"
+          />
+
+          <TextField
+            id="signup-section"
+            label="Section"
+            value={form.section}
+            onChange={handleChange('section')}
+            placeholder="A"
+          />
+        </div>
 
         <TextField
           id="signup-password"
