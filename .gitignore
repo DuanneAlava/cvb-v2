@@ -1,0 +1,12 @@
+# Editor / tooling config that belongs to a machine, not the project
+.claude/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Dependencies are restored with npm install
+node_modules/
+
+# Build output
+frontend/build/

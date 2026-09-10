@@ -1,94 +1,113 @@
-import { useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { CATEGORIES } from '../data/categories.js';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import Logo from './Logo.jsx';
+import SearchBar from './SearchBar.jsx';
+import ProfileMenu from './ProfileMenu.jsx';
 import Button from './Button.jsx';
 
 /*
- * The navy bar pinned to the top of every page.
+ * The navy bar pinned to the top of the page.
  *
- * On a wide screen it shows the six category links in a row.
- * On a phone or tablet those links are hidden and a burger button opens them
- * in a drop-down panel instead.
+ * It now holds three things and nothing else, left to right:
  *
- * On the right hand side:
- * - logged out -> "Log in" and "Sign up" buttons (no profile is shown yet)
- * - logged in  -> the student's profile circle, name and a "Log out" button
+ *   1. the logo and the CampusVoiceBox name
+ *   2. the search box, with the category dropdown built into its left edge
+ *   3. the profile circle
+ *
+ * The row of category links that used to sit across the middle is gone. Those
+ * categories now live in two places instead: the dropdown inside the search
+ * box, and the "Browse by category" shortcuts inside the profile menu.
+ *
+ * On a phone the row wraps and the search box drops onto its own line
+ * underneath, so the logo and the profile circle are never squashed. It is
+ * still one search box, not a second copy - see the note on the row below.
  */
 function Navbar() {
-  // Tracks whether the mobile burger menu is open. It starts closed.
-  const [menuOpen, setMenuOpen] = useState(false);
-
-  // Lets us read and change the ?category=... part of the address bar.
-  const [searchParams] = useSearchParams();
-  const activeCategory = searchParams.get('category');
-
-  // Who is logged in, and the function to log them out.
-  const { user, logout } = useAuth();
-  const navigate = useNavigate();
-
-  // Log out, close the burger menu, then return to the landing page.
-  function handleLogout() {
-    logout();
-    setMenuOpen(false);
-    navigate('/');
-  }
-
-  // Work out the styling for one category link.
-  // The link for the category currently being viewed is highlighted.
-  function categoryClass(slug) {
-    const isActive = activeCategory === slug;
-    return `rounded-md px-2.5 py-2 text-sm transition-colors ${
-      isActive ? 'font-semibold text-white' : 'text-white/80 hover:text-white'
-    }`;
-  }
+  const { user } = useAuth();
 
   return (
     <header className="sticky top-0 z-40 bg-navy-600 shadow-sm">
-      <nav className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
-        {/* LEFT: the logo, which always links back to the landing page. */}
-        <Link to="/" onClick={() => setMenuOpen(false)}>
-          <Logo tone="light" />
-        </Link>
-
+      <nav className="mx-auto max-w-7xl px-4 py-3 sm:px-6">
         {/*
-          MIDDLE: the six category links.
-          `hidden lg:flex` means: hide these on small screens, show them from
-          the large breakpoint (1024px) upwards, where there is room for them.
-        */}
-        <div className="hidden items-center gap-1 lg:flex">
-          {CATEGORIES.map((category) => (
-            <Link
-              key={category.slug}
-              to={`/?category=${category.slug}`}
-              className={categoryClass(category.slug)}
-            >
-              {category.label}
-            </Link>
-          ))}
-        </div>
+          ONE ROW THAT WRAPS, RATHER THAN TWO COPIES OF THE SEARCH BOX.
 
-        {/* RIGHT: either the auth buttons or the logged-in profile. */}
-        <div className="flex items-center gap-2">
-          {/* This block is hidden on small screens; it moves into the burger menu instead. */}
-          <div className="hidden items-center gap-2 sm:flex">
+          The search box used to be rendered twice - once inline for desktop,
+          once on a second row for phones - with each copy hidden at the other
+          breakpoint. That quietly broke the box's self-measuring width: the
+          hidden copy measures zero, so after the window crossed the breakpoint
+          the now-visible copy kept a width it had worked out while invisible.
+
+          Flex wrapping does the same layout with a single instance. On a phone
+          the search box carries `order-last w-full` and drops onto its own
+          line; from `sm` up the row stops wrapping and it sits inline between
+          the logo and the buttons.
+        */}
+        <div className="flex flex-wrap items-center gap-3 sm:flex-nowrap sm:gap-4">
+          {/* 1. THE LOGO, which always links back to the board. `shrink-0`
+                stops it being squeezed when the search box grows. */}
+          <Link
+            to="/"
+            // min-h/min-w pad the tap area out to 44px around the 36px mark; the
+            // artwork itself is unchanged, it just sits centred in a bigger target.
+            className="order-1 flex min-h-[44px] min-w-[44px] shrink-0 items-center sm:order-none"
+            aria-label="CampusVoiceBox home"
+          >
+            {/*
+              The wordmark is hidden on the narrowest phones, where the search
+              box needs the room. The hexagon on its own still identifies the
+              app, and the `aria-label` above keeps the link readable to screen
+              readers either way.
+            */}
+            <span className="hidden sm:block">
+              <Logo tone="light" />
+            </span>
+            <span className="sm:hidden">
+              <Logo tone="light" showText={false} />
+            </span>
+          </Link>
+
+          {/*
+            2. THE SEARCH BOX.
+
+            SIZING:
+
+            `flex-1` claims the free space and `max-w-2xl` stops it growing
+            past 672px, because a search field stretched the full width of a
+            wide monitor looks absurd for a few words of text.
+
+            There is deliberately NO auto margin here. The box belongs beside
+            the logo, so it starts immediately after it and any width left
+            over collects on the right, before the buttons. Centring it in the
+            leftover space would float it away from the wordmark it reads as
+            part of.
+
+            The three ordering classes work as a set: on a phone the logo is
+            1, the buttons are 2 and the search box is last, so it wraps onto
+            its own line and takes the full width. From `sm` up ALL THREE
+            reset to `order-none`, which hands the row back to the natural DOM
+            order - logo, search, buttons. They have to be reset together;
+            leaving any one of them ordered sorts it to the wrong end.
+
+            `min-w-0` lets the box shrink rather than pushing the bar wider
+            than the window.
+          */}
+          <div className="order-last w-full min-w-0 sm:order-none sm:w-auto sm:max-w-2xl sm:flex-1">
+            <SearchBar />
+          </div>
+
+          {/*
+            3. THE RIGHT-HAND END: the profile menu once logged in, or the two
+            auth buttons before that.
+
+            `ml-auto` holds it against the right edge at every width. It is
+            what collects the space left over once the search box has taken
+            its 672px, which is why the search stays tucked beside the logo
+            while these stay pinned to the far right.
+          */}
+          <div className="order-2 ml-auto flex shrink-0 items-center gap-2 sm:order-none">
             {user ? (
-              // LOGGED IN - show the profile circle with the student's initials.
-              <>
-                <span className="flex items-center gap-2 text-sm text-white">
-                  <span className="grid h-8 w-8 place-items-center rounded-full bg-white/20 text-xs font-bold">
-                    {user.initials}
-                  </span>
-                  {/* The name is hidden on medium screens to save space. */}
-                  <span className="hidden md:inline">{user.name}</span>
-                </span>
-                <Button variant="outline" size="sm" onClick={handleLogout}>
-                  Log out
-                </Button>
-              </>
+              <ProfileMenu />
             ) : (
-              // LOGGED OUT - no profile appears here yet, only these two buttons.
               <>
                 <Link to="/login">
                   <Button variant="outline" size="sm">
@@ -103,92 +122,9 @@ function Navbar() {
               </>
             )}
           </div>
-
-          {/*
-            The burger button. `lg:hidden` shows it on phones and tablets and
-            hides it once the full row of category links has room to appear.
-          */}
-          <button
-            type="button"
-            onClick={() => setMenuOpen(!menuOpen)}
-            aria-label={menuOpen ? 'Close menu' : 'Open menu'}
-            aria-expanded={menuOpen}
-            className="grid h-10 w-10 place-items-center rounded-lg text-white hover:bg-white/10 lg:hidden"
-          >
-            {/* Show an X while the menu is open, and the three burger lines while it is closed. */}
-            <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2">
-              {menuOpen ? (
-                <path d="M6 6l12 12M18 6L6 18" strokeLinecap="round" />
-              ) : (
-                <path d="M4 7h16M4 12h16M4 17h16" strokeLinecap="round" />
-              )}
-            </svg>
-          </button>
         </div>
+
       </nav>
-
-      {/*
-        THE BURGER MENU PANEL.
-        It only exists in the page while `menuOpen` is true, and it is hidden
-        from large screens because those already show the links in the bar above.
-      */}
-      {menuOpen && (
-        <div className="border-t border-white/15 bg-navy-600 lg:hidden">
-          <div className="mx-auto max-w-7xl px-4 py-3 sm:px-6">
-            {/* The same six category links, stacked one per row for easy tapping. */}
-            <div className="flex flex-col">
-              {CATEGORIES.map((category) => (
-                <Link
-                  key={category.slug}
-                  to={`/?category=${category.slug}`}
-                  onClick={() => setMenuOpen(false)} // close the menu after choosing
-                  className={`rounded-md px-2 py-3 text-base ${
-                    activeCategory === category.slug
-                      ? 'font-semibold text-white'
-                      : 'text-white/85 hover:bg-white/10'
-                  }`}
-                >
-                  {category.label}
-                </Link>
-              ))}
-            </div>
-
-            {/*
-              The auth controls repeated inside the menu, because the versions in
-              the bar are hidden on the smallest screens. `sm:hidden` keeps them
-              from appearing twice on tablets.
-            */}
-            <div className="mt-3 flex gap-2 border-t border-white/15 pt-3 sm:hidden">
-              {user ? (
-                <>
-                  <span className="flex flex-1 items-center gap-2 text-sm text-white">
-                    <span className="grid h-8 w-8 place-items-center rounded-full bg-white/20 text-xs font-bold">
-                      {user.initials}
-                    </span>
-                    {user.name}
-                  </span>
-                  <Button variant="outline" size="sm" onClick={handleLogout}>
-                    Log out
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <Link to="/login" className="flex-1" onClick={() => setMenuOpen(false)}>
-                    <Button variant="outline" size="sm" fullWidth>
-                      Log in
-                    </Button>
-                  </Link>
-                  <Link to="/signup" className="flex-1" onClick={() => setMenuOpen(false)}>
-                    <Button variant="cream" size="sm" fullWidth>
-                      Sign up
-                    </Button>
-                  </Link>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
     </header>
   );
 }

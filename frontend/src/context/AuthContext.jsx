@@ -1,114 +1,121 @@
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useMemo, useState } from 'react';
+import { useStore, readSessionId, writeSessionId, initialsOf } from '../services/store.js';
+import { PERMISSIONS, can as roleCan, homeFor } from '../data/roles.js';
 
 /*
- * AuthContext holds the "who is logged in" state for the whole app.
+ * ONE ACCOUNT SYSTEM FOR THE WHOLE PLATFORM.
  *
- * IMPORTANT - this is a front-end only demo account system. Accounts are kept in
- * the browser's localStorage, which means passwords are readable by anyone with
- * access to this browser. Before this app goes live, sign-up and log-in must be
- * moved to a real server that hashes passwords. Do not reuse a real password here.
+ * There is no separate admin login. A person signs in once, at /login, and the
+ * `role` on their account decides where they land and what they may do:
+ *
+ *     LOGIN
+ *       |
+ *     check email + password
+ *       |
+ *     read the account's role
+ *       |
+ *       +-- super_admin --> /admin/dashboard
+ *       +-- admin       --> /admin/dashboard
+ *       +-- student     --> /student/dashboard
+ *       +-- user        --> /student/dashboard
+ *       +-- no match    --> stay on /login with an error
+ *
+ * Building it this way is what keeps the two halves of the site synchronised.
+ * A second, separate admin login would mean a second list of accounts, and the
+ * moment those two lists disagree the admin panel stops describing reality.
+ *
+ * The account record itself lives in services/store.js alongside the posts, so
+ * "who wrote this" is a real link between two records rather than a name
+ * copied onto a post.
  */
 
-// The two localStorage keys we read and write.
-const USERS_KEY = 'cvb_users'; // the list of every account created on this browser
-const SESSION_KEY = 'cvb_session'; // the email of the account currently logged in
-
-// Create the context object that components will read from.
 const AuthContext = createContext(null);
 
-// Read the saved account list out of localStorage and turn it back into an array.
-function readUsers() {
-  try {
-    return JSON.parse(localStorage.getItem(USERS_KEY)) || [];
-  } catch {
-    // If the stored value is damaged, start again with an empty list.
-    return [];
-  }
-}
-
-// Save the account list back into localStorage as text.
-function writeUsers(users) {
-  localStorage.setItem(USERS_KEY, JSON.stringify(users));
-}
-
-// Turn "Juan Dela Cruz" into "JD" so we can show initials in the profile circle.
-function initialsOf(fullName) {
-  return fullName
-    .trim()
-    .split(/\s+/) // split the name on spaces
-    .slice(0, 2) // keep at most the first two words
-    .map((word) => word[0].toUpperCase()) // take the first letter of each
-    .join('');
-}
-
 export function AuthProvider({ children }) {
-  // The currently logged-in user, or null when nobody is logged in.
-  const [user, setUser] = useState(null);
+  /*
+   * Only the id of the signed-in account is held here. The account itself is
+   * looked up from the store on every render, so an admin editing somebody's
+   * role or suspending them takes effect for that person immediately, without
+   * them having to sign out and back in.
+   */
+  const [sessionId, setSessionId] = useState(readSessionId);
 
-  // When the app first loads, check whether a session was left behind
-  // from last time so the user stays logged in after a page refresh.
-  useEffect(() => {
-    const savedEmail = localStorage.getItem(SESSION_KEY);
-    if (!savedEmail) return;
+  // `null` as the actor: nobody is performing these actions until they are
+  // signed in, and logging in records itself explicitly.
+  const store = useStore(null);
 
-    const match = readUsers().find((account) => account.email === savedEmail);
-    if (match) {
-      setUser({ name: match.name, email: match.email, initials: initialsOf(match.name) });
-    }
-  }, []);
+  const user = useMemo(() => {
+    const found = store.db.users.find((candidate) => candidate.id === sessionId);
+    if (!found) return null;
 
-  // Create a new account. Returns an error message string, or null when it worked.
-  function signup({ name, email, password }) {
-    const users = readUsers();
+    // Never let the password out of the store and into the rest of the app.
+    const { password, ...safe } = found;
+    return { ...safe, initials: initialsOf(found.name) };
+  }, [store.db.users, sessionId]);
 
-    // Refuse to create a second account with the same email address.
-    const alreadyExists = users.some(
-      (account) => account.email.toLowerCase() === email.toLowerCase()
-    );
-    if (alreadyExists) return 'An account with that school email already exists.';
-
-    // Add the new account to the list and save it.
-    const newUser = { name, email, password };
-    writeUsers([...users, newUser]);
-
-    // Log the new user in straight away.
-    localStorage.setItem(SESSION_KEY, email);
-    setUser({ name, email, initials: initialsOf(name) });
-    return null;
+  /*
+   * Both of these return { error } when they fail and { user, home } when they
+   * work. `home` matters: the page that called them has to redirect straight
+   * away, and the `user` in this context will not have updated until the next
+   * render, so the destination is handed back rather than read afterwards.
+   */
+  function startSession(account) {
+    writeSessionId(account.id);
+    setSessionId(account.id);
+    store.recordLogin(account);
+    return { user: account, home: homeFor(account) };
   }
 
-  // Log an existing user in. Returns an error message string, or null when it worked.
-  function login({ email, password }) {
-    const match = readUsers().find(
-      (account) => account.email.toLowerCase() === email.toLowerCase()
-    );
+  const signup = useCallback(
+    (details) => {
+      const result = store.register(details);
+      if (result.error) return { error: result.error };
+      return startSession(result.user);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [store]
+  );
 
-    // Deliberately vague message so we never reveal which accounts exist.
-    if (!match || match.password !== password) {
-      return 'That email and password do not match an account.';
-    }
+  const login = useCallback(
+    (credentials) => {
+      const result = store.authenticate(credentials);
+      if (result.error) return { error: result.error };
+      return startSession(result.user);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [store]
+  );
 
-    localStorage.setItem(SESSION_KEY, match.email);
-    setUser({ name: match.name, email: match.email, initials: initialsOf(match.name) });
-    return null;
-  }
+  const logout = useCallback(() => {
+    if (user) store.recordLogout(user);
+    writeSessionId(null);
+    setSessionId(null);
+  }, [store, user]);
 
-  // Log the current user out and forget the saved session.
-  function logout() {
-    localStorage.removeItem(SESSION_KEY);
-    setUser(null);
-  }
+  const value = useMemo(
+    () => ({
+      user,
+      signup,
+      login,
+      logout,
 
-  // useMemo stops this object being rebuilt on every render, which would
-  // needlessly re-render every component that reads the context.
-  const value = useMemo(() => ({ user, signup, login, logout }), [user]);
+      // The one question every guard and every button asks.
+      can: (permission) => roleCan(user, permission),
+
+      // Where this account belongs, used after logging in and by the guards.
+      home: homeFor(user),
+    }),
+    [user, signup, login, logout]
+  );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
-// A short helper so components can write `const { user } = useAuth()`.
+// A short helper so components can write `const { user, can } = useAuth()`.
 export function useAuth() {
   const context = useContext(AuthContext);
   if (!context) throw new Error('useAuth must be used inside <AuthProvider>.');
   return context;
 }
+
+export { PERMISSIONS };

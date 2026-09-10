@@ -1,24 +1,90 @@
 /*
- * The CampusVoiceBox wordmark: a megaphone icon in a rounded square,
- * followed by the app name. Used in the navbar and on both auth pages.
+ * The CampusVoiceBox brand mark: an orange hexagon, open on its right side,
+ * with a blue voice waveform sitting inside it. The mark is followed by the
+ * app name, so the pair always reads as "logo + CampusVoiceBox".
+ *
+ * It is drawn as SVG rather than loaded from a picture file so it stays sharp
+ * on any screen and needs no extra download.
+ *
+ * Props:
+ * - tone      'light' for dark backgrounds (the navy navbar),
+ *             'dark' for white cards (the log-in and sign-up pages)
+ * - showText  set to false to show the hexagon on its own, with no wordmark
  */
-function Logo({ tone = 'light' }) {
-  // 'light' is for dark backgrounds (the navy navbar), 'dark' is for white cards.
+
+// The two brand colours, kept here so both the mark and any future use agree.
+const ORANGE = '#EE7623';
+const BLUE = '#1B4E9E';
+
+/*
+ * The waveform bars, described as [height in viewBox units].
+ * Every bar is centred on the middle line, so a taller bar grows equally
+ * upwards and downwards - exactly how a sound level meter behaves.
+ */
+const BAR_HEIGHTS = [16, 26, 12, 32, 20, 28, 14];
+
+function Logo({ tone = 'light', showText = true }) {
   const textColor = tone === 'light' ? 'text-white' : 'text-navy-900';
-  const boxColor = tone === 'light' ? 'bg-white/15' : 'bg-navy-600';
 
   return (
-    <span className={`flex items-center gap-2 font-bold tracking-tight ${textColor}`}>
-      {/* The rounded square holding the megaphone icon. */}
-      <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg ${boxColor}`}>
-        {/* A megaphone drawn as SVG so it stays sharp at any screen size. */}
-        <svg viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5 text-white">
-          <path d="M3 10.5v3a1.5 1.5 0 0 0 1.5 1.5H6l3.2 3.7a1 1 0 0 0 1.8-.7V5.5a1 1 0 0 0-1.8-.7L6 8.5H4.5A1.5 1.5 0 0 0 3 10.5Z" />
-          <path d="M14.5 9a1 1 0 0 1 1.4 0 4.3 4.3 0 0 1 0 6 1 1 0 1 1-1.4-1.4 2.3 2.3 0 0 0 0-3.2 1 1 0 0 1 0-1.4Z" />
-          <path d="M17.3 6.2a1 1 0 0 1 1.4 0 8.2 8.2 0 0 1 0 11.6 1 1 0 0 1-1.4-1.4 6.2 6.2 0 0 0 0-8.8 1 1 0 0 1 0-1.4Z" />
+    <span className={`flex items-center gap-2.5 font-bold tracking-tight ${textColor}`}>
+      {/*
+        The white tile behind the mark. The logo uses orange and dark blue, and
+        dark blue on a navy navbar would be almost invisible, so the tile keeps
+        both colours readable wherever the logo is placed. On a white card the
+        tile simply blends in.
+      */}
+      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white shadow-sm">
+        <svg viewBox="0 0 64 64" className="h-7 w-7" role="img" aria-label="CampusVoiceBox">
+          {/*
+            THE ORANGE PART OF THE HEXAGON.
+            It runs from the top-right corner, anti-clockwise around the top,
+            left and bottom, stopping short of the bottom-right corner.
+          */}
+          <path
+            d="M45.5 8.6 L18.5 8.6 L5 32 L18.5 55.4 L33 55.4"
+            fill="none"
+            stroke={ORANGE}
+            strokeWidth="8.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+
+          {/*
+            THE BLUE PART OF THE HEXAGON - the bottom-right edge.
+            The stretch between this piece and the orange one is left empty on
+            purpose: that gap is what gives the mark its open, "listening" look.
+          */}
+          <path
+            d="M39 55.4 L45.5 55.4 L59 32"
+            fill="none"
+            stroke={BLUE}
+            strokeWidth="8.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+
+          {/*
+            THE WAVEFORM INSIDE.
+            Each bar is a rounded rectangle. `x` steps along by 5.4 units so the
+            bars are evenly spaced, and `y` is worked out from the height so the
+            bar stays centred on the middle line.
+          */}
+          {BAR_HEIGHTS.map((height, index) => (
+            <rect
+              key={index}
+              x={14.3 + index * 5.4}
+              y={32 - height / 2}
+              width="3"
+              height={height}
+              rx="1.5"
+              fill={BLUE}
+            />
+          ))}
         </svg>
       </span>
-      CampusVoiceBox
+
+      {showText && 'CampusVoiceBox'}
     </span>
   );
 }

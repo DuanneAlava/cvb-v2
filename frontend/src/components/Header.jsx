@@ -1,7 +1,7 @@
 import Button from './Button.jsx';
 // Importing the photo lets the build add a fingerprint to its file name,
 // so browsers pick up a new version instead of showing a stale cached one.
-import campusPhoto from '../assets/campus-hero.jpg';
+import campusPhoto from '../assets/OllcfLogo.jpg';
 
 /*
  * The hero panel at the top of the landing page.
