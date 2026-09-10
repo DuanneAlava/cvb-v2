@@ -19,6 +19,21 @@ import ConfirmDialog from './ConfirmDialog.jsx';
  *
  * The panel closes when the student clicks anywhere else on the page or
  * presses Escape, so it never gets stuck open.
+ *
+ * WHAT YOU'LL MEET IN THIS FILE (plain-English notes)
+ *
+ * - useRef()  A box that holds a value across re-draws WITHOUT causing one
+ *   when it changes. Attached to an element with `ref={menuRef}`, it gives
+ *   us a handle on the real DOM node - here, to ask "was that click inside
+ *   the menu or outside it?"
+ * - document.addEventListener(...)  Listen for an event on the whole page,
+ *   not just one element. Set up inside useEffect and removed again in its
+ *   cleanup, so the listener does not outlive the menu.
+ * - `if (!user) return null`  An early return: a component that renders
+ *   `null` draws nothing at all.
+ * - `role="menu"` / `role="menuitem"`  Accessibility roles that tell a
+ *   screen reader this is a menu, not a list of unrelated buttons.
+ * - `aria-expanded`  Tells assistive technology whether the panel is open.
  */
 function ProfileMenu() {
   const [open, setOpen] = useState(false);

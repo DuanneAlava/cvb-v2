@@ -75,6 +75,34 @@ import {
  *
  * Everything here writes through services/store.js, which records the audit
  * entry and sends the student their notification as part of the same write.
+ *
+ * WHAT YOU'LL MEET IN THIS FILE (plain-English notes)
+ *
+ * - Small local components  Section, SideAction, CheckIcon and StatusSteps
+ *   are components used only by this file, so they live here rather than in
+ *   ui.jsx. A component is just a function that returns JSX.
+ * - JSX  The HTML-looking syntax inside JavaScript. `<Section title="x">`
+ *   is really a function call; `{expression}` inside it drops a JavaScript
+ *   value into the markup.
+ * - `{ label, hint, ...props }`  Destructure the two props this component
+ *   uses and gather the rest (onClick, aria-expanded...) into `props`, then
+ *   `{...props}` passes them all on to the Button. This is how a wrapper
+ *   stays transparent to whatever the caller wants to set.
+ * - `switch (post.status) { case 'pending': return ...; }`  Pick one branch
+ *   by value; a tidier if/else-if chain for a fixed set of options.
+ * - `.findIndex(...)`  The position of the first item that passes the test,
+ *   or -1 if none does. That position is the current step on the line.
+ * - Functions that return JSX vs components  `assignForm()` and
+ *   `resolveForm()` are plain functions called like `{assignForm('Assign')}`.
+ *   If they were components (<AssignForm />) React would rebuild their
+ *   inputs on every keystroke and the cursor would jump out of the box.
+ * - `let nextStep = null; if (...) nextStep = <Section>...</Section>`
+ *   Building an element in a variable, then dropping it into the markup
+ *   with `{nextStep}`. Rendering null draws nothing.
+ * - `sm:sticky sm:top-0`  Stay pinned to the top of the scrolling area
+ *   while the content beneath scrolls, from the small breakpoint up.
+ * - `aria-current="step"` / `role="status"` / `role="alert"`  Accessibility:
+ *   which step is current; a message that changed; an error to announce.
  */
 
 function Section({ title, children, tone = 'default' }) {

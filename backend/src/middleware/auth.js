@@ -59,6 +59,29 @@ function attachUserIfPresent(req, _res, next) {
  * the decision to revoke access.
  */
 
+/*
+ * WHAT YOU'LL MEET IN THIS FILE (plain-English notes)
+ *
+ * - "Middleware"  In Express, a function that runs BEFORE the route handler
+ *   and can either let the request continue (`next()`) or answer it itself
+ *   (`res.status(403).json(...)`). Every function here is middleware: it sits
+ *   in front of a route and decides whether the request gets through.
+ * - `req`, `res`, `next`  The request (who is asking, with what), the
+ *   response (what we send back), and "pass to the next step".
+ * - A "token" (JWT)  A signed string the server hands out at login and the
+ *   browser sends back with every request. requireAuth checks the signature
+ *   and reads the account id out of it.
+ * - `async` / `await`  Talking to the database takes time; an async function
+ *   can wait for the answer without blocking every other request.
+ * - `pool.query('... WHERE id = $1', [value])`  A "parameterised" query.
+ *   The `$1` is a placeholder the database fills in safely. Pasting the
+ *   value into the SQL text yourself is how SQL injection happens; this is
+ *   the rule that prevents it.
+ * - `ROLE_PERMISSIONS[account.role] ?? []`  The permission list for the
+ *   role, or an empty list if the role is unknown - so an unknown role can
+ *   do nothing rather than crash the check.
+ */
+
 // Kept in step with frontend/src/data/roles.js. If a role is added there, add
 // it here too - and prefer requirePermission below to naming roles directly.
 const ROLE_PERMISSIONS = {

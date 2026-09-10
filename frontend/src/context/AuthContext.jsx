@@ -26,6 +26,25 @@ import { PERMISSIONS, can as roleCan, homeFor } from '../data/roles.js';
  * The account record itself lives in services/store.js alongside the posts, so
  * "who wrote this" is a real link between two records rather than a name
  * copied onto a post.
+ *
+ * WHAT YOU'LL MEET IN THIS FILE (plain-English notes)
+ *
+ * - React "context"  A way to make a value available to every component
+ *   underneath a certain point in the tree, without passing it down by hand
+ *   through each one as a prop. createContext() makes the slot; the
+ *   <AuthContext.Provider value={...}> element fills it for everything inside
+ *   it; useContext() reads it from any descendant. Here the value is "who is
+ *   signed in, and what may they do".
+ * - AuthProvider  The component that wraps the whole app (see App.js) and
+ *   owns the signed-in state.
+ * - useAuth()  A custom hook - a small function starting with `use` - that
+ *   wraps useContext so a screen can write `const { user, can } = useAuth()`.
+ * - `const { password, ...safe } = found`  Destructuring with a "rest"
+ *   pattern: pull `password` out on its own, and gather every OTHER property
+ *   into a new object called `safe`. It is how the password is left behind.
+ * - useCallback / useMemo  Keep a function or value the same between
+ *   re-draws unless its inputs change, so components that receive it do not
+ *   think something changed when nothing did.
  */
 
 const AuthContext = createContext(null);

@@ -22,6 +22,24 @@ import { PageHeader, Panel } from '../../components/admin/ui.jsx';
  * The figure that matters most is the last column. A department with four open
  * concerns is busy; a department averaging eleven days to close one has a
  * problem, and those are not the same thing.
+ *
+ * WHAT YOU'LL MEET IN THIS FILE (plain-English notes)
+ *
+ * - One row per department, built with `.map` over DEPARTMENTS  Each pass
+ *   filters the posts down to that department and works out its numbers.
+ * - `.reduce((sum, post) => sum + (...), 0) / timed.length / 86400000`
+ *   Add up every post's time-to-resolve in milliseconds, divide by how many
+ *   there were (the average), divide by a day's worth of milliseconds
+ *   (days).
+ * - `Math.min(...open.map((p) => Date.parse(p.createdAt)))`  The earliest
+ *   creation date among the open posts - the one waiting longest.
+ * - `null` vs `0`  A department that has never resolved anything has no
+ *   average; it is null, and the cell prints a dash. Printing 0.0 would read
+ *   as "instant".
+ * - `sortValue: (row) => row.avgDays ?? Infinity`  When sorting by average,
+ *   treat "no average" as infinitely large so those rows sink to the bottom
+ *   rather than sorting as zero to the top. `?? -1` does the same for
+ *   oldest-open, in the other direction.
  */
 function Departments() {
   const { user } = useAuth();

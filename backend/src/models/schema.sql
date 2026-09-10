@@ -26,6 +26,12 @@ CREATE TABLE IF NOT EXISTS users (
    * Registration must never be able to set an admin role. Promotion is a
    * deliberate act by an admin, recorded in activity_logs - and never on
    * their own account.
+   *
+   * Reading the column definition: VARCHAR(20) is text up to 20 characters;
+   * NOT NULL means it must always have a value; DEFAULT 'student' is the
+   * value it gets when an INSERT leaves it out; CHECK (...) is a rule the
+   * database enforces on every write - a row with any other role is refused
+   * outright, whatever the application code tried to do.
    */
   role          VARCHAR(20) NOT NULL DEFAULT 'student'
                 CHECK (role IN ('admin', 'student', 'user')),

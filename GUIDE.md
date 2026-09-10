@@ -167,6 +167,11 @@ never change its own role, suspend itself or delete itself.
 
 ### What is where
 
+For a plain-English, file-by-file explanation of the code - what each thing
+is, what it is called, and why it is written that way - see
+[`docs/CODE-WALKTHROUGH.md`](docs/CODE-WALKTHROUGH.md). Each of the files
+below also opens with a "What you'll meet in this file" note.
+
 | Area | File |
 |---|---|
 | Roles and permissions | `frontend/src/data/roles.js` |

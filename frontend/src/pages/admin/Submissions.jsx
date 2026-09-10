@@ -63,6 +63,35 @@ import {
  *
  * Anything a route pins is removed from the filter bar rather than shown
  * fixed, so there is no control on screen that can contradict the page.
+ *
+ * WHAT YOU'LL MEET IN THIS FILE (plain-English notes)
+ *
+ * - Props with defaults  `lockedGroup = null` in the parameter list means
+ *   "if the route does not pass this, treat it as null". A route that
+ *   passes nothing gets All Submissions; the queues pass a lock or two.
+ * - Filters in the address bar  useSearchParams, as in SearchBar.jsx. Every
+ *   dropdown reads its value from the URL and writes back to it, which is
+ *   why a filtered view can be copied as a link.
+ * - useEffect watching one param  The `highlight` effect re-runs whenever
+ *   that param changes, opening the dialog for that submission - needed
+ *   because a click on a notification can change the address while this
+ *   page is already on screen.
+ * - `[a, b, c].filter(Boolean).join(' ')`  Drop the empty/undefined entries
+ *   (Boolean(x) is false for them), then glue what is left into one string.
+ *   That string is the "haystack" the search box looks in.
+ * - `new Set(list)`  A collection that keeps each value once. Used to find
+ *   which departments actually appear in the records. `[...set]` turns it
+ *   back into an array.
+ * - `.every((item) => item.needsAssignment)`  True only if EVERY item passes
+ *   the test - here, "is everything on this queue the kind that gets
+ *   assigned?"
+ * - Column definitions as data  `columns` is a list of objects - header,
+ *   how to draw the cell, how to sort - handed to DataTable. `.filter(Boolean)`
+ *   at the end drops a column that was written as `condition && {...}` and
+ *   came out false.
+ * - A "slug"  A short, URL-safe version of a name: `title.toLowerCase()
+ *   .replace(/[^a-z0-9]+/g, '-')` turns "Open Work" into "open-work" for the
+ *   CSV filename. The /.../g is a regex applied to every match.
  */
 function Submissions({
   title,

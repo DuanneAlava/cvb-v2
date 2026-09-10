@@ -44,6 +44,19 @@ import { PageHeader, Panel, StatCard } from '../../components/admin/ui.jsx';
  *
  * Everything left is counted straight from the records with no helper, no
  * state and no time maths. Every figure is one filter and a length.
+ *
+ * WHAT YOU'LL MEET IN THIS FILE (plain-English notes)
+ *
+ * - Chart data as a list of { label, color, value }  Each useMemo below
+ *   builds one of these lists from the vocabulary in workflow.js /
+ *   categories.js, and the BarChart component draws whatever it is given.
+ *   The chart knows nothing about statuses or categories.
+ * - `.filter((row) => row.value > 0)`  Leave out empty bars.
+ * - `.sort((a, b) => b.value - a.value)`  Biggest first. A sort function
+ *   returns a negative number to put `a` first, positive to put `b` first.
+ * - `Math.round((handled / total) * 100)`  A percentage, as a whole number.
+ *   The `total ? ... : 0` guard avoids dividing by zero on an empty board.
+ * - `avgResolution.toFixed(1)`  Print a number with one decimal place.
  */
 function Analytics() {
   const { user } = useAuth();

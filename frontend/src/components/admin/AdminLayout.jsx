@@ -28,6 +28,30 @@ import { Avatar, Badge, RoleBadge } from './ui.jsx';
  * Hiding a link is a tidiness measure, not a security one - the route guards
  * in components/RequireAuth.jsx are what stop somebody typing the address, and
  * the server is what has to stop them for real.
+ *
+ * WHAT YOU'LL MEET IN THIS FILE (plain-English notes)
+ *
+ * - A "layout" component  A frame that draws the parts every page shares
+ *   (sidebar, header) and puts <Outlet /> where the current page goes.
+ *   App.js nests every /admin route inside it.
+ * - Navigation as data  buildNav() returns a list of sections, each a list
+ *   of items { to, label, icon, permission }. The sidebar is drawn by looping
+ *   over that list, so adding a page is adding one object, not new markup.
+ * - `.filter(...)` then `.map(...)` on that list  Drop the sections and rows
+ *   the signed-in admin may not use, then draw what is left.
+ * - <NavLink>  A <Link> that also knows whether it points at the current
+ *   address, for highlighting the active row. This file works that out by
+ *   hand (see NavItem) because it also has to compare the query string.
+ * - An SVG icon  `<svg viewBox="0 0 24 24"><path d="..." /></svg>` draws an
+ *   icon from a string of coordinates. The strings live in ICONS; `d` is
+ *   the path data, `stroke="currentColor"` makes it take the text colour.
+ * - `fixed inset-y-0 left-0 w-64`  Pin the sidebar to the left edge, full
+ *   height, 16rem wide; `lg:pl-64` on the content leaves exactly that much
+ *   room from the large breakpoint up. Below it the sidebar becomes a
+ *   slide-over drawn only while `menuOpen` is true.
+ * - `z-40` / `z-50`  Stacking order: which layer sits on top of which.
+ * - `aria-current="page"`  Marks the link for the page you are on, for
+ *   assistive technology.
  */
 
 /* ------------------------------------------------------------------ *

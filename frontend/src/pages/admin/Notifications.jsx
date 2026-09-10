@@ -23,6 +23,22 @@ import { Badge, EmptyState, PageHeader, Panel, Select, timeAgo } from '../../com
  * Approval queue and are counted there, once. This page carries the things
  * that have no queue - a new account, and anything about the signed-in
  * admin's own posts - so its unread count never duplicates a queue badge.
+ *
+ * WHAT YOU'LL MEET IN THIS FILE (plain-English notes)
+ *
+ * - notificationsFor(db, user)  The store's selector for "which
+ *   notifications is this person allowed to see" - their own, plus the
+ *   admin feed if they can open the panel.
+ * - `[...new Set(all.map((note) => note.type))]`  Collect every type that
+ *   appears, once each: map to the types, de-duplicate with a Set, spread
+ *   back into an array. That is the dropdown's option list.
+ * - The same markup in a <Link> or a <button>  `body` is built once and
+ *   dropped inside whichever wrapper fits: a link when the notification
+ *   points somewhere, a button when it only needs marking as read. One
+ *   piece of markup, two behaviours.
+ * - Local useState for the filter  Unlike the Submissions page, this filter
+ *   is not in the address bar: it is a passing choice, not a view anyone
+ *   would bookmark.
  */
 function Notifications() {
   const { user } = useAuth();

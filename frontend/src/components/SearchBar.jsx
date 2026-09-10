@@ -14,6 +14,27 @@ import { CATEGORIES, labelForSlug } from '../data/categories.js';
  * rather than into React state. Keeping them there means the board can read
  * them from anywhere without state being passed down through components, the
  * Back button behaves, and a filtered view can be copied and shared as a link.
+ *
+ * WHAT YOU'LL MEET IN THIS FILE (plain-English notes)
+ *
+ * - The "query string"  The part of an address after `?`, e.g.
+ *   ?category=safety&q=light. Each name=value pair is a "search param".
+ * - useSearchParams()  A react-router hook that reads those params and lets
+ *   you replace them. It returns the current set and a setter, like useState.
+ * - URLSearchParams  The browser's built-in object for a query string, with
+ *   .get(name), .set(name, value) and .delete(name).
+ * - A "controlled input"  An <input> whose `value` comes from our data and
+ *   whose `onChange` writes back to it, so React - not the browser - owns
+ *   what the box shows. Both the select and the text box here are controlled
+ *   by the address bar.
+ * - window.matchMedia('(max-width: 639px)')  Asks the browser "does this CSS
+ *   media query match right now?", and can tell us when that changes. It is
+ *   how the placeholder knows whether it is on a phone.
+ * - `opacity-0` over an icon  A standard trick for restyling a native
+ *   <select>: the real control is made invisible but left in place, on top
+ *   of the picture we want people to see, so a tap still opens it.
+ * - `aria-hidden="true"`  Hide a purely decorative element from screen
+ *   readers, so the icon is not announced on top of the select it decorates.
  */
 
 /*

@@ -34,6 +34,20 @@ import {
  * An administrator never lands here: /account forwards them to their own
  * page in the admin panel, which shows the same fields with the admin
  * controls beside them. One account page per person, not two.
+ *
+ * WHAT YOU'LL MEET IN THIS FILE (plain-English notes)
+ *
+ * - `useState(() => {...})`  A lazy initialiser: the function runs once, on
+ *   the first render, to build the starting value - here, an object with one
+ *   entry per editable field, seeded from the signed-in account.
+ * - `setDraft({ ...draft, [field.key]: value })`  Copy the draft and change
+ *   one property. React state should be replaced, not edited in place, so
+ *   React can tell something changed.
+ * - <form onSubmit={handleSave}>  The handler receives the submit event and
+ *   calls preventDefault() so the page does not reload.
+ * - `disabled`  On the email input: shown, greyed out, not editable.
+ * - `role="alert"` / `role="status"`  Tell screen readers that the error or
+ *   the "saved" message is an announcement worth reading out when it appears.
  */
 
 function Account() {

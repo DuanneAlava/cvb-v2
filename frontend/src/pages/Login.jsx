@@ -22,6 +22,24 @@ import Button from '../components/Button.jsx';
  * A person who was sent here by a route guard is returned to wherever they
  * were heading instead, so a bookmarked admin page still works after signing
  * in - provided their role is allowed there, which the guard checks again.
+ *
+ * WHAT YOU'LL MEET IN THIS FILE (plain-English notes)
+ *
+ * - One useState for the whole form  `form` is an object holding both
+ *   fields. `setForm({ ...form, [field]: value })` copies the old object and
+ *   changes one property - the `[field]` in square brackets means "the
+ *   property whose name is in the variable field".
+ * - handleChange(field) returns a function  A function that makes a
+ *   function ("higher-order function"). handleChange('email') hands back the
+ *   onChange handler for the email box, so both inputs share one piece of
+ *   code.
+ * - `event.preventDefault()`  Stops the form doing a full page reload on
+ *   submit, which is the browser's default and would lose our state.
+ * - `location.state?.from`  The address the route guard asked us to return
+ *   to, if any. The `?.` is "optional chaining": read `.from` only if
+ *   `state` exists, otherwise give undefined instead of crashing.
+ * - `navigate(to, { replace: true })`  Go to an address without leaving the
+ *   login page in the Back history.
  */
 function Login() {
   const [form, setForm] = useState({ email: '', password: '' });

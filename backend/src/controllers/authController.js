@@ -67,6 +67,13 @@ async function register(req, res, next) {
       return res.status(409).json({ error: 'An account with that school email already exists.' });
     }
 
+    /*
+     * bcrypt turns the password into a one-way "hash": a scrambled string
+     * that cannot be turned back into the password, but can be checked
+     * against a later attempt. The 10 is the "cost" - how slow to make it,
+     * deliberately, so guessing millions of passwords is impractical. The
+     * plain password is never stored anywhere.
+     */
     const passwordHash = await bcrypt.hash(password, 10);
     const result = await pool.query(
       /*

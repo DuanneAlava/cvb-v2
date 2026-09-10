@@ -25,6 +25,26 @@ import Reveal from '../components/Reveal.jsx';
  *
  * The filters still live in the address bar, set by the navbar search box and
  * the profile menu, so this page reads them rather than owning the controls.
+ *
+ * WHAT YOU'LL MEET IN THIS FILE (plain-English notes)
+ *
+ * - A "page" component  Same as any other component; it is just the one a
+ *   route in App.js points at. It owns the data for the screen and hands
+ *   pieces of it down to smaller components (Header, SuggestionCard) as
+ *   props.
+ * - useMemo for a derived list  `visiblePosts` is worked out from the db
+ *   plus the filters. Wrapping it in useMemo means the filtering only
+ *   re-runs when one of the listed dependencies changes, not on every
+ *   keystroke elsewhere on the page.
+ * - `.filter(...).sort(...)`  Chained array methods: keep the posts that
+ *   match, then order what is left. `Date.parse(text)` turns an ISO date
+ *   string into a number of milliseconds so two dates can be subtracted -
+ *   `b - a` sorts newest first.
+ * - `searchParams.get('q') ?? ''`  Read a filter from the address; if it is
+ *   absent, treat it as an empty string rather than null.
+ * - `useNavigate()`  A hook that returns a function for sending the visitor
+ *   to another address from code (as opposed to <Link>, which is a thing to
+ *   click). Used to send guests to /login when they try to post or vote.
  */
 function Home() {
   const { user, can } = useAuth();

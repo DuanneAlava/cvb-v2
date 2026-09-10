@@ -12,6 +12,13 @@
  * Note there is no `votes` field here on purpose. Vote counts are never stored
  * on the post itself - they are counted from the vote records in store.js,
  * which is what keeps every post starting from a clean zero.
+ *
+ * WHAT YOU'LL MEET IN THIS FILE
+ *
+ * A list (array) of objects. Each `{ ... }` is one post, each `name: value`
+ * inside it is one property. services/store.js turns these into full
+ * records on first run - adding an author, a kind and a status - which is
+ * why fields like `kind` are not written here.
  */
 export const SEED_SUGGESTIONS = [
   {

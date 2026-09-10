@@ -25,6 +25,33 @@ const { requireAuth, requirePermission } = require('../middleware/auth');
  * of anonymous rows - see the note in models/schema.sql.
  */
 
+/*
+ * WHAT YOU'LL MEET IN THIS FILE (plain-English notes)
+ *
+ * - express.Router()  A group of related routes that is mounted at one path
+ *   (here /admin, in routes/index.js). `router.get('/users', ...)` therefore
+ *   answers GET /admin/users.
+ * - HTTP verbs  GET reads, POST creates, PATCH changes part of something,
+ *   DELETE removes. Each route is one verb at one path.
+ * - `router.use(requireAuth)`  Apply a middleware to every route below it.
+ * - `requirePermission('manage_users')` as a route argument  Middleware
+ *   given per route, between the path and the handler. It runs first; the
+ *   handler only runs if it calls next().
+ * - `req.params.id` / `req.query.search` / `req.body.status`  The three
+ *   places input arrives: the address (/users/:id), the query string, and
+ *   the JSON body of a POST or PATCH.
+ * - `res.status(400).json({ error })`  Reply with an HTTP status code and a
+ *   JSON body. 400 = bad input, 401 = not signed in, 403 = not allowed,
+ *   404 = not found, 204 = done, nothing to return.
+ * - A "transaction"  Several database statements that must all succeed or
+ *   all be undone together (BEGIN ... COMMIT, or ROLLBACK on error). See
+ *   inTransaction() below.
+ * - `RETURNING id, title`  Ask an UPDATE or DELETE to hand back the row it
+ *   touched, so we do not need a second query to read it.
+ * - `next(err)`  Hand an error to the app's error handler (middleware/
+ *   errorHandler.js) instead of crashing the process.
+ */
+
 const router = express.Router();
 
 // Nothing in this file is reachable without a valid token.

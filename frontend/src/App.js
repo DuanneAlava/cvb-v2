@@ -54,6 +54,25 @@ import AdminProfile from './pages/admin/AdminProfile.jsx';
  * own browser, so they keep an ordinary student out of the admin panel - they
  * do not stop somebody determined to get in. The server has to check the role
  * again on every request; see backend/src/middleware/auth.js.
+ *
+ * WHAT YOU'LL MEET IN THIS FILE (plain-English notes)
+ *
+ * - "Routing"  Deciding which screen to draw for which address. This is a
+ *   single-page app: the browser loads one HTML page and react-router swaps
+ *   components in and out as the address changes, with no full reload.
+ * - <BrowserRouter>  Turns the browser's address bar into something the app
+ *   can read and change. Everything routed must sit inside it.
+ * - <Routes> / <Route path="..." element={...}>  The table of addresses.
+ *   Each Route says "at this path, draw this element".
+ * - Nested routes  A <Route> with other <Route>s inside it. The parent's
+ *   element draws a frame (a layout, or a guard) and puts <Outlet /> where
+ *   the matching child should appear. That is how every /admin/... page
+ *   shares one sidebar without each page importing it.
+ * - `index`  The child to show when the address is exactly the parent's
+ *   path and nothing more - here it redirects /admin to /admin/dashboard.
+ * - <Navigate to="..." replace />  A redirect, expressed as an element.
+ * - The `*` path  Matches anything nothing else matched: the catch-all.
+ * - <AuthProvider>  Wraps everything so every page can ask who is signed in.
  */
 function App() {
   return (

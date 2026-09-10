@@ -6,6 +6,26 @@
  * chart and admin action reads from these lists rather than hard-coding
  * strings, which is what lets the admin panel absorb a new status or category
  * without being rewritten.
+ *
+ * WHAT YOU'LL MEET IN THIS FILE (plain-English notes)
+ *
+ * - `export const NAME = ...`  A value other files can import by name. "const"
+ *   means the variable itself cannot be reassigned. This is how one file
+ *   becomes the single source of truth for the whole app.
+ * - An object keyed by id, e.g. STATUSES.pending. Think of it as a dictionary:
+ *   look up the word ("pending") and get everything known about it (label,
+ *   colours, what it may move to next).
+ * - `Object.values(STATUSES)`  Turns that dictionary into a plain list of its
+ *   entries, in the order they were written - which is what dropdowns and
+ *   charts want to loop over.
+ * - `.filter(...)` / `.map(...)`  Two ways of walking a list. filter keeps the
+ *   entries that pass a test; map turns each entry into something else (here,
+ *   usually just its `key`).
+ * - `STATUSES[key] ?? STATUSES.pending`  The "nullish coalescing" operator.
+ *   Read it as "the thing on the left, or if that is missing, the thing on the
+ *   right". It is the safety net for an unknown key.
+ * - `badgeClass` / `barClass`  Tailwind CSS class names stored as data, so a
+ *   status carries its own colour and every screen draws it the same way.
  */
 
 /* ------------------------------------------------------------------ *

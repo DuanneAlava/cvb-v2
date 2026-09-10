@@ -26,6 +26,31 @@ import Button from './Button.jsx';
  * dropdown becomes an icon (see SearchBar.jsx), and the buttons lose a
  * little padding. At 360px that leaves the search field about 90px of
  * typing room, which is a magnifier and a word - enough to search on.
+ *
+ * WHAT YOU'LL MEET IN THIS FILE (plain-English notes)
+ *
+ * - Tailwind CSS  The styling system used throughout. Instead of writing CSS
+ *   files, each element lists small "utility classes" in className, one per
+ *   rule: `flex` (lay children out in a row), `items-center` (line them up
+ *   vertically), `gap-2` (space between them), `px-3` (horizontal padding),
+ *   `bg-navy-600` (background colour from tailwind.config.js).
+ * - Breakpoint prefixes  `sm:gap-4` means "gap-4, but only from the small
+ *   breakpoint (640px) upwards". Unprefixed classes are the phone layout;
+ *   prefixed ones override it on wider screens. "Mobile first."
+ * - `flex-1`  Take up whatever width is left over.
+ * - `shrink-0`  Never be squeezed narrower than your content.
+ * - `min-w-0`  Allow shrinking below the content's natural width - needed on
+ *   a flex child that must not push the row wider than the screen.
+ * - `ml-auto`  Push this item to the far right by giving it all the spare
+ *   left margin.
+ * - `!px-2.5`  The `!` makes the class "important", so it beats the padding
+ *   the Button component sets for itself.
+ * - `sticky top-0`  Stay pinned to the top of the window while the page
+ *   scrolls underneath.
+ * - `aria-label`  Text for screen readers when the visible content is only an
+ *   image or an icon.
+ * - <Link to="/">  react-router's replacement for <a href>; it changes the
+ *   address without reloading the page.
  */
 function Navbar() {
   const { user } = useAuth();

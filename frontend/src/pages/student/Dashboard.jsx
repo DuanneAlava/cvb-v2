@@ -26,6 +26,21 @@ import {
  * nothing assumes the box is a bin; this page shows them exactly where their
  * submission is, who is handling it, and what was eventually done about it -
  * the same records the admin was working on, read from the student's side.
+ *
+ * WHAT YOU'LL MEET IN THIS FILE (plain-English notes)
+ *
+ * - Shared building blocks from components/admin/ui.jsx  Badge, Panel,
+ *   StatCard and the date helpers are the admin panel's, reused here so a
+ *   status looks identical to the student and to the admin.
+ * - `.slice(0, 8)`  The first eight items of a list - "show the latest few".
+ * - `.map((post) => <li key={post.id}>...)`  Turn a list of records into a
+ *   list of elements. The `key` is how React tells the items apart when the
+ *   list changes; it must be unique and stable, which is why it is the id.
+ * - `{post.department && (<p>...</p>)}`  Draw the "being handled by" line
+ *   only when there is a department. The same `&&` trick appears for the
+ *   rejection reason and the resolution.
+ * - `user.name.split(' ')[0]`  Split the full name on spaces and take the
+ *   first piece - the first name, for the greeting.
  */
 function StudentDashboard() {
   const { user } = useAuth();

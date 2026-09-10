@@ -42,6 +42,21 @@ import {
  * and changing one - retiring a status, say - has to be a code change that
  * goes through review, not a text box that can be edited during a demo and
  * leave existing records pointing at something that no longer exists.
+ *
+ * WHAT YOU'LL MEET IN THIS FILE (plain-English notes)
+ *
+ * - Everything drawn here is `.map` over a list imported from data/ - the
+ *   page has no data of its own, which is why it can never disagree with
+ *   the rest of the app.
+ * - `Object.keys(PERMISSIONS).length`  How many permissions exist. A role
+ *   holding that many holds everything, so it gets one "Everything" badge
+ *   instead of twelve.
+ * - `permission.replace(/_/g, ' ')`  Turn 'moderate_posts' into 'moderate
+ *   posts' for display. The `g` flag means "every underscore, not just the
+ *   first".
+ * - localStorage.removeItem(key)  Delete one saved key. The reset removes
+ *   every key the store uses, then `window.location.href = '/'` reloads the
+ *   page from the top so the store re-seeds itself.
  */
 
 /*

@@ -29,6 +29,26 @@ import Button from './Button.jsx';
  *            Out" of kind "Suggestion" - two answers to one question.
  * - onClose  called when the pop-up should shut
  * - onSubmit called with the finished post when everything checks out
+ *
+ * WHAT YOU'LL MEET IN THIS FILE (plain-English notes)
+ *
+ * - A "modal"  A pop-up that sits over the page and takes the focus until
+ *   it is closed. The dark backdrop is a full-screen element; the dialog is
+ *   a box inside it.
+ * - One useState per field  Each input has its own remembered value and its
+ *   own setter. Typing calls the setter; React re-draws the input with the
+ *   new value. That is a "controlled form".
+ * - `async` / `await`  Reading a chosen photo takes time. An async function
+ *   can `await` that work - pause at that line until it finishes - without
+ *   freezing the page.
+ * - `[...event.target.files]`  The spread operator turning the browser's
+ *   FileList (which is not a real array) into a normal array we can loop.
+ * - `event.stopPropagation()`  A click inside the dialog would normally
+ *   "bubble" up to the backdrop and close it. This stops the bubble.
+ * - `event.preventDefault()`  Stops a form's built-in behaviour of reloading
+ *   the page when submitted, so we can handle the submission ourselves.
+ * - `.trim()`  Removes spaces from both ends of a string, so "   " does not
+ *   count as a title.
  */
 
 // The shortest title and message we accept, so posts are not one-word entries.

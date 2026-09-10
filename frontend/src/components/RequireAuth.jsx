@@ -29,6 +29,25 @@ import { PERMISSIONS, homeFor } from '../data/roles.js';
  * browser believes. That middleware is in ../../backend/src/middleware/auth.js
  * and has to stay switched on: treat these guards as the convenience layer on
  * top of it, never as the thing doing the protecting.
+ *
+ * WHAT YOU'LL MEET IN THIS FILE (plain-English notes)
+ *
+ * - A "route guard"  A component whose only job is to decide whether to show
+ *   the page underneath it or send the visitor somewhere else.
+ * - <Navigate to="..." replace />  From react-router: rendering this element
+ *   performs a redirect. `replace` swaps the current history entry instead of
+ *   adding one, so the Back button does not lead straight back into the
+ *   guard and bounce again.
+ * - <Outlet />  "Draw whichever child route matched here." A guard that
+ *   wraps a group of routes in App.js renders <Outlet /> to let the real
+ *   page through once the check passes.
+ * - useLocation()  The current address - pathname, query string and any
+ *   `state` that was handed along with a navigation.
+ * - `state={{ from: ... }}`  A note attached to the redirect, invisible in
+ *   the URL. The login page reads it to send the person back to where they
+ *   were heading once they have signed in.
+ * - `{ children }`  The elements written between a component's opening and
+ *   closing tags. RedirectIfSignedIn either renders them or redirects.
  */
 
 /* Signed in as anybody. */

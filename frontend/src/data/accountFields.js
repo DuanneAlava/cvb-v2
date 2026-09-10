@@ -15,6 +15,14 @@
  *
  * `type: 'select'` means the value is picked from data/programs.js rather
  * than typed, so one programme cannot end up recorded five different ways.
+ *
+ * WHAT YOU'LL MEET IN THIS FILE
+ *
+ * This is "configuration as data": instead of writing six <input> elements
+ * by hand in two places, we describe the six fields once as a list of small
+ * objects, and each form loops over the list (`ACCOUNT_FIELDS.map(...)`) to
+ * draw its inputs. `key` is the property name on the account record,
+ * `label` is what the person sees, `type` is the HTML input type.
  */
 export const ACCOUNT_FIELDS = [
   { key: 'name', label: 'Full name', type: 'text', required: true },

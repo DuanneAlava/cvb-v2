@@ -11,6 +11,20 @@
  * Add it to ROLES with its permissions and its home page. Route guards, the
  * sidebar and the admin user list all read from here, so nothing else needs
  * touching.
+ *
+ * WHAT YOU'LL MEET IN THIS FILE (plain-English notes)
+ *
+ * - A "permission" is just a string, e.g. 'moderate_posts'. Screens ask "does
+ *   this account hold that string?" rather than "is this account an admin?",
+ *   so a new role is a list of strings and nothing else has to change.
+ * - PERMISSIONS is written UPPER_CASE because it is a constant - a value that
+ *   never changes while the app runs. That is a naming convention, not a rule
+ *   the language enforces.
+ * - `Object.values(...)` collects every value in an object into a list.
+ * - `.includes(x)` asks whether a list contains x; it answers true or false.
+ * - `can(user, permission)` is a "pure function": give it the same inputs and
+ *   it always gives the same answer, touching nothing else. That is what
+ *   makes it safe to call from anywhere - a route guard, a button, a menu.
  */
 
 /*

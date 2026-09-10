@@ -26,6 +26,23 @@ import { formatDate } from './admin/ui.jsx';
  * - votes       how many students have backed THIS post
  * - totalVotes  every vote cast across the whole board, for the share
  * - isTopVoted  true when nothing on the board has more
+ *
+ * WHAT YOU'LL MEET IN THIS FILE (plain-English notes)
+ *
+ * - "Props"  The inputs a component receives, written as attributes where it
+ *   is used: <SuggestionCard votes={3} />. Inside, they arrive as one object,
+ *   and `{ suggestion, votes, ... }` in the parameter list pulls the named
+ *   ones out ("destructuring"). `totalVotes = 0` is a default for when the
+ *   caller leaves it out.
+ * - `onVote`  A function passed in as a prop. The card does not know how
+ *   voting works; it just calls onVote when the button is pressed and the
+ *   page that owns the data does the rest. This is how a child talks to its
+ *   parent in React.
+ * - `{condition && <element />}`  Draw the element only when the condition
+ *   is true. If it is false, nothing is drawn. Used for the kind tag.
+ * - A template literal in className  `${kind.badgeClass}` drops a class name
+ *   held in data into the class list, so the tag's colour comes from
+ *   workflow.js rather than being repeated here.
  */
 function SuggestionCard({ suggestion, votes, totalVotes = 0, isTopVoted = false, hasVoted, onVote }) {
   // Share of all votes cast. Guarded against the empty board, where every post

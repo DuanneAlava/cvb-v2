@@ -47,6 +47,42 @@ import {
  * contained: replace the read/write helpers below with calls to
  * services/api.js and every screen keeps working unchanged. See GUIDE.md,
  * "Connecting frontend to backend".
+ *
+ *
+ * WHAT YOU'LL MEET IN THIS FILE (plain-English notes)
+ * =================================================
+ * - localStorage   A small key/value store the browser keeps for this site,
+ *                  surviving reloads. It only holds strings, so records are
+ *                  turned into text with JSON.stringify on the way in and
+ *                  back into objects with JSON.parse on the way out.
+ * - JSON           "JavaScript Object Notation" - the text form of an object,
+ *                  e.g. {"id":"post-1","title":"..."}.
+ * - "the db"       Not a real database. It is one plain object holding five
+ *                  lists - users, posts, votes, notifications, audit - read
+ *                  from localStorage and written back after every change.
+ * - seed data      The starter records written on the very first visit, so
+ *                  the app is not empty when somebody opens it.
+ * - BroadcastChannel  A browser feature that lets one tab send a message to
+ *                  the other open tabs of the same site. Used so a change in
+ *                  one tab shows up in another without a reload.
+ * - a "hook"       Any React function whose name starts with `use`. Hooks let
+ *                  a component remember values (useState), run code after
+ *                  drawing (useEffect), and cache calculations (useMemo).
+ *                  They may only be called from a component or another hook.
+ * - useStore()     The custom hook every screen calls. It hands back the db
+ *                  plus the actions (approve, assign, vote...) that change it.
+ * - a "selector"   A plain function that answers a question about the db
+ *                  (findUser, platformStats...). It reads, never writes.
+ * - an "action"    A function that changes the db (createPost, changeStatus).
+ *                  Every action goes through commit(), which saves, tells the
+ *                  other tabs, and re-draws the screen.
+ * - audit log      A record of who did what and when, written by the actions
+ *                  themselves so it can never be skipped.
+ * - ISO date       A date as text like 2026-09-10T07:58:34.591Z - the format
+ *                  new Date().toISOString() produces. It sorts correctly as
+ *                  plain text and is what every `createdAt` holds.
+ * - try / catch    "Attempt this; if it throws an error, do that instead."
+ *                  Used around storage, which can be switched off or full.
  */
 
 // Bumping this wipes the stored platform and re-seeds it. Do that whenever the
@@ -111,6 +147,13 @@ const CHANNEL_NAME = 'cvb_platform';
  * Small helpers
  * ------------------------------------------------------------------ */
 
+/*
+ * A fresh id such as "post-lx3k9f1". `Date.now()` is the current time in
+ * milliseconds; `.toString(36)` writes that number in base 36 (digits plus
+ * letters) so it is short. The counter on the end keeps two ids made in the
+ * same millisecond apart. The backticks make a "template literal" - a string
+ * with ${...} slots that are filled in.
+ */
 let idCounter = 0;
 function newId(prefix) {
   idCounter += 1;
@@ -588,10 +631,29 @@ export function notificationsFor(db, user) {
  * ------------------------------------------------------------------ */
 
 export function useStore(actor = null) {
+  /*
+   * useState: React's way of remembering a value between re-draws. It hands
+   * back the current value (`db`) and a function to replace it (`setDb`);
+   * calling setDb re-draws every component using this hook. Passing the
+   * function `readDb` itself, rather than `readDb()`, is a "lazy initialiser":
+   * React calls it once, on the first render, instead of re-reading storage
+   * on every render.
+   *
+   * `actor = null` is a default parameter - what `actor` is when the caller
+   * passes nothing. The actor is who is performing actions, for the audit log.
+   */
   const [db, setDb] = useState(readDb);
 
-  // Pull in changes made in any other tab, so an approval lands on the
-  // student's board without anybody refreshing.
+  /*
+   * useEffect: run this code AFTER the component has drawn, and run the
+   * returned function when the component goes away (the "cleanup"). The `[]`
+   * at the end is the dependency list; empty means "only on first draw and
+   * on unmount". Here it subscribes to changes from other tabs and other
+   * parts of this page, and unsubscribes again so nothing leaks.
+   *
+   * Pull in changes made in any other tab, so an approval lands on the
+   * student's board without anybody refreshing.
+   */
   useEffect(() => {
     function refresh() {
       setDb(readDb());
@@ -623,6 +685,16 @@ export function useStore(actor = null) {
    * Doing it in one place means an action cannot forget to save, cannot forget
    * to tell the other tabs, and - importantly - cannot forget to write its
    * audit entry.
+   *
+   * `mutate` is a "callback": a function passed in to be called later. Each
+   * action below hands commit() the specific change it wants made, and
+   * commit() wraps it in the read-save-notify routine they all share.
+   *
+   * useCallback keeps `commit` the same function object across re-draws
+   * (unless its dependencies, `[]`, change - and they never do). That
+   * matters because the actions list further down is built with useMemo and
+   * lists `commit` as a dependency: a new commit every render would mean a
+   * new actions object every render, defeating the caching.
    */
   const commit = useCallback((mutate) => {
     const next = readDb(); // re-read first, so a change from another tab is not lost
@@ -680,6 +752,16 @@ export function useStore(actor = null) {
     next.notifications = next.notifications.slice(0, 300);
   }
 
+  /*
+   * useMemo: "work this out once, and hand back the same result until one of
+   * these dependencies changes". Building the actions object is cheap, but
+   * a NEW object on every render would make every component that lists it
+   * as a dependency re-run its own effects, so it is cached.
+   *
+   * Everything inside is a "closure": the functions below can see `commit`,
+   * `actor`, `log` and `notify` from the surrounding hook even though they
+   * are called much later, from a button.
+   */
   const actions = useMemo(() => {
     /* ------------------------------------------------------------ *
      * ACCOUNTS
@@ -1111,6 +1193,9 @@ export function useStore(actor = null) {
       });
     }
 
+    // Shorthand: `{ register }` means `{ register: register }` - the property
+    // is named after the variable. This object is what `useStore()` spreads
+    // into its return value, so a screen can write `store.approve(...)`.
     return {
       register,
       authenticate,
@@ -1134,6 +1219,8 @@ export function useStore(actor = null) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [commit, actor?.id, actor?.name, actor?.role]);
 
+  // `...actions` is the "spread" operator: copy every property of `actions`
+  // into this new object, alongside `db`.
   return { db, ...actions };
 }
 

@@ -17,6 +17,21 @@ import Button from '../components/Button.jsx';
  * an admin role can only be granted afterwards by an administrator, from the
  * user profile page. A sign-up form that could mint administrators would make every
  * other permission check pointless.
+ *
+ * WHAT YOU'LL MEET IN THIS FILE (plain-English notes)
+ *
+ * - The same controlled-form pattern as Login.jsx: one useState object for
+ *   the fields, a handler that copies it and changes one property, and
+ *   `event.preventDefault()` on submit.
+ * - A "regular expression" (regex)  The /.../ below is a pattern for text.
+ *   `.test(value)` answers "does this text match the pattern?". This one
+ *   reads: start, some non-space characters, an @, some more, a dot, some
+ *   more, end - the rough shape of an email address.
+ * - Validation before saving  Each check sets an `error` string and returns
+ *   early; the form only calls signup() once every check has passed. The
+ *   error is drawn with `{error && <p>...</p>}` - nothing when it is empty.
+ * - `programOptions(...)`  Builds the <option> list for the course dropdown
+ *   from data/programs.js, so the list of programmes lives in one place.
  */
 
 // A basic email shape check: some text, an @, some text, a dot, then more text.

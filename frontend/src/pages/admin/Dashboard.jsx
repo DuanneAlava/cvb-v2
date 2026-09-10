@@ -37,6 +37,21 @@ import {
  *
  * Every number is counted from the same records the student site writes to,
  * so the dashboard cannot drift out of date - there is nothing to refresh.
+ *
+ * WHAT YOU'LL MEET IN THIS FILE (plain-English notes)
+ *
+ * - platformStats(db)  A selector from store.js that counts everything the
+ *   cards need in one pass, so the page is not full of `.filter().length`.
+ * - `Math.floor((Date.now() - Date.parse(x)) / 86400000)`  Milliseconds
+ *   between now and a date, divided by the milliseconds in a day
+ *   (1000 * 60 * 60 * 24 = 86,400,000), rounded down: whole days waited.
+ * - `null` meaning "there is no such thing"  `longestWait` is null when the
+ *   queue is empty, as opposed to 0, which would read as "waited zero days".
+ *   The card checks for null and prints a dash.
+ * - A chained ternary  `a ? x : b ? y : z` - "if a then x, otherwise if b
+ *   then y, otherwise z". Used to pick a card's colour tone.
+ * - `?highlight=${post.id}` in a link  A query param the queue page reads
+ *   to open that submission's dialog straight away.
  */
 function Dashboard() {
   const { user } = useAuth();

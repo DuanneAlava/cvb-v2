@@ -44,6 +44,25 @@ import {
  * there, and this form, this view and the student's form all pick it up - it
  * does not need a matching change in three other places, which is what the
  * brief was warning against.
+ *
+ * WHAT YOU'LL MEET IN THIS FILE (plain-English notes)
+ *
+ * - useParams()  Reads the variable part of the address. The route is
+ *   /admin/users/:userId, so on /admin/users/user-juan this returns
+ *   { userId: 'user-juan' }.
+ * - An early return for "not found"  If the account does not exist the
+ *   function returns a small "gone" screen straight away, so nothing below
+ *   has to keep checking whether `account` is null.
+ * - `confirming` holding one of three strings  'suspend' | 'activate' |
+ *   'delete' | null. One piece of state drives one ConfirmDialog with three
+ *   sets of wording, picked by `{ suspend: {...}, ... }[confirming]` - an
+ *   object used as a lookup table, indexed by the current value.
+ * - `[isSelf]`  "Is this the signed-in admin's own account?" Several controls
+ *   check it, because you must not be able to suspend, delete or demote
+ *   yourself by accident.
+ * - `...ACCOUNT_FIELDS.map(...)` inside an array literal  Spread the mapped
+ *   list into a bigger list, so the fixed rows (Account ID, Registered) can
+ *   follow the generated ones.
  */
 
 function UserProfile() {

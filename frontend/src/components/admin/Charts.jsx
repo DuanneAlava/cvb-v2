@@ -14,6 +14,20 @@
  * The chart also prints its numbers as text beside the drawing. A bar is a
  * quick impression; the figure is what an administrator actually quotes in
  * a meeting - and it is what a screen reader can read out.
+ *
+ * WHAT YOU'LL MEET IN THIS FILE (plain-English notes)
+ *
+ * - `.reduce((sum, item) => sum + item.value, 0)`  Boil a list down to one
+ *   number: start at 0 and add each item's value. That is the total.
+ * - `Math.max(...data.map((item) => item.value), 1)`  The largest value in
+ *   the list. The `...` spreads the list into separate arguments, because
+ *   Math.max takes numbers, not a list; the trailing `1` stops the answer
+ *   being 0 (which would mean dividing by zero when sizing the bars).
+ * - `style={{ width: `${width}%` }}`  An inline style, because the width is
+ *   a calculated number and Tailwind classes are fixed names. The doubled
+ *   braces are "a JavaScript object, inside a JSX attribute".
+ * - `item.color ?? 'bg-navy-600'`  Use the row's colour, or navy if it has
+ *   none.
  */
 
 /* ------------------------------------------------------------------ *
