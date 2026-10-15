@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { PERMISSIONS } from '../../data/roles.js';
-import { TONE_CLASS, notificationInfo, statusInfo, departmentLabel } from '../../data/workflow.js';
+import { statusInfo, departmentLabel } from '../../data/workflow.js';
 import {
   useStore,
   userActivity,
@@ -14,6 +14,7 @@ import Layout from '../../components/Layout.jsx';
 import Button from '../../components/Button.jsx';
 import BackButton from '../../components/BackButton.jsx';
 import PostModal from '../../components/PostModal.jsx';
+import NotificationContent from '../../components/NotificationContent.jsx';
 import {
   Badge,
   CategoryBadge,
@@ -279,29 +280,11 @@ function StudentDashboard() {
               />
             ) : (
               <ul className="divide-y divide-slate-100">
-                {myNotifications.map((note) => {
-                  const info = notificationInfo(note.type);
-                  return (
-                    <li key={note.id} className="flex items-start gap-2.5 py-3">
-                      <span
-                        aria-hidden="true"
-                        className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${
-                          note.read ? 'bg-transparent' : 'bg-navy-600'
-                        }`}
-                      />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className={`text-sm font-semibold ${note.read ? 'text-slate-600' : 'text-navy-900'}`}>
-                            {note.title}
-                          </p>
-                          <Badge className={TONE_CLASS[info.tone]}>{info.label}</Badge>
-                        </div>
-                        {note.body && <p className="mt-0.5 text-sm text-slate-500">{note.body}</p>}
-                        <p className="mt-1 text-xs text-slate-400">{timeAgo(note.createdAt)}</p>
-                      </div>
-                    </li>
-                  );
-                })}
+                {myNotifications.map((note) => (
+                  <li key={note.id} className="flex items-start gap-2.5 py-3">
+                    <NotificationContent note={note} compact />
+                  </li>
+                ))}
               </ul>
             )}
           </Panel>

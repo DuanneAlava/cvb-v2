@@ -30,6 +30,15 @@ export const POLICY_VERSIONS = {
 
 export const COOKIE_CONSENT_VERSION = '2026-10-13';
 
+// The three policy pages, in the order every list of them shows them: the
+// links in the footers (components/PolicyLinks.jsx) and the other two
+// policies at the foot of each one (components/PolicyPage.jsx).
+export const POLICY_PAGES = [
+  { to: '/privacy-policy', label: 'Privacy Policy' },
+  { to: '/terms-and-conditions', label: 'Terms & Conditions' },
+  { to: '/cookie-policy', label: 'Cookie Policy' },
+];
+
 /*
  * Each value is either the confirmed fact - a plain string - or `null`, which
  * the pages show as a highlighted "[To be confirmed: ...]" using the

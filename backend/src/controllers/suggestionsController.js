@@ -11,8 +11,9 @@ const { str, toId } = require('../models/shape');
  * read from GET /api/state (controllers/stateController.js).
  */
 
-// The same limits as the posting form in frontend/src/components/PostModal.jsx,
-// so the API never accepts something the form itself would have refused.
+// The same limits as the posting form (frontend/src/data/postLimits.js), so
+// the API never accepts something the form itself would have refused.
+// Exported so scripts/check-shared-lists.mjs can check the two still match.
 const MIN_TITLE = 5;
 const MAX_TITLE = 80;
 const MIN_MESSAGE = 10;
@@ -173,4 +174,12 @@ async function getAttachment(req, res, next) {
   }
 }
 
-module.exports = { createPost, toggleVote, getAttachment };
+module.exports = {
+  createPost,
+  toggleVote,
+  getAttachment,
+  MIN_TITLE,
+  MAX_TITLE,
+  MIN_MESSAGE,
+  MAX_MESSAGE,
+};

@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext.jsx';
-import { TONE_CLASS, notificationInfo } from '../../data/workflow.js';
+import { notificationInfo } from '../../data/workflow.js';
 import { useStore, notificationsFor } from '../../services/store.js';
 import Button from '../../components/Button.jsx';
-import { Badge, EmptyState, PageHeader, Panel, Select, timeAgo } from '../../components/admin/ui.jsx';
+import NotificationContent from '../../components/NotificationContent.jsx';
+import { EmptyState, PageHeader, Panel, Select } from '../../components/admin/ui.jsx';
 
 /*
  * The notification centre.
@@ -111,34 +112,7 @@ function Notifications() {
         ) : (
           <ul className="divide-y divide-slate-100">
             {visible.map((note) => {
-              const info = notificationInfo(note.type);
-
-              const body = (
-                <>
-                  {/* An unread row is marked with a dot rather than a different
-                      background, so a long list does not turn into stripes. */}
-                  <span
-                    aria-hidden="true"
-                    className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${
-                      note.read ? 'bg-transparent' : 'bg-navy-600'
-                    }`}
-                  />
-
-                  <span className="min-w-0 flex-1">
-                    <span className="flex flex-wrap items-center gap-2">
-                      <span className={`font-semibold ${note.read ? 'text-slate-600' : 'text-navy-900'}`}>
-                        {note.title}
-                      </span>
-                      <Badge className={TONE_CLASS[info.tone]}>{info.label}</Badge>
-                    </span>
-                    {note.body && <span className="mt-0.5 block text-sm text-slate-500">{note.body}</span>}
-                  </span>
-
-                  <span className="shrink-0 whitespace-nowrap text-xs text-slate-400">
-                    {timeAgo(note.createdAt)}
-                  </span>
-                </>
-              );
+              const body = <NotificationContent note={note} />;
 
               return (
                 <li key={note.id}>

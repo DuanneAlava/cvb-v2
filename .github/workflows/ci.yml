@@ -1,11 +1,12 @@
 name: CampusVoiceBox CI
 
 # Runs on every push and pull request against main.
-# It proves both apps pass ESLint, the lists the frontend and backend each
-# keep still match (scripts/check-shared-lists.mjs), the API tests pass
-# against a real Postgres (backend/test/), the migrations run and the server
-# starts, the website builds, and every Docker image - development and
-# production - builds cleanly. It stops short of an actual deploy step - add
+# It proves both apps pass ESLint, the website's tests pass (frontend/src/
+# **/*.test.js[x]), the lists the frontend and backend each keep still match
+# (scripts/check-shared-lists.mjs), the API tests pass against a real
+# Postgres (backend/test/), the migrations run and the server starts, the
+# website builds, and every Docker image - development and production -
+# builds cleanly. It stops short of an actual deploy step - add
 # that job once hosting is decided, following the commented example at the
 # bottom.
 
@@ -17,7 +18,7 @@ on:
 
 jobs:
   frontend:
-    name: Frontend - install, lint & build
+    name: Frontend - install, lint, tests, shared lists & build
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -28,17 +29,32 @@ jobs:
         with:
           node-version: '24'
           cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: |
+            frontend/package-lock.json
+            backend/package-lock.json
       - run: npm ci
       # frontend/.env switches ESLint off inside the build, so it runs here
       # instead - any error or warning fails the job.
       - run: npm run lint
+      # The website's tests, run once rather than watching for changes as
+      # `npm test` does on a developer's machine.
+      - run: npm test -- --watchAll=false
+        env:
+          CI: true
+      # The list check loads files from both apps - the website's
+      # services/consent.js imports React - so it runs here, where the
+      # website's packages already are, with the server's installed beside them.
+      - name: Install the backend's packages, for the list check
+        working-directory: backend
+        run: npm ci
+      - name: The lists the frontend and backend both keep still match
+        run: node ../scripts/check-shared-lists.mjs
       - run: npm run build --if-present
         env:
           CI: true
 
   backend:
-    name: Backend - lint, lists, API tests & migrate against a real Postgres
+    name: Backend - lint, API tests & migrate against a real Postgres
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -75,8 +91,6 @@ jobs:
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
       - run: npm run lint
-      - name: The lists the frontend and backend both keep still match
-        run: node ../scripts/check-shared-lists.mjs
       - name: Run migrations against the CI database
         run: npm run db:migrate
       - name: Boot the server and hit /api/health

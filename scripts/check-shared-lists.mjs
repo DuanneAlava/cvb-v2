@@ -3,14 +3,17 @@
  *
  * The website and the server each keep their own copy of a few lists: the
  * statuses and the moves between them, the kinds, the departments, the
- * categories, the roles and what they may do, the policy versions, the
- * privacy request types, the account fields, the password and email rules,
- * the blocked words and the filter that uses them. Each copy says "kept in
- * step with" the other. This script is what makes sure: it loads both copies
- * (and the lists written into models/schema.sql) and fails if any two differ.
+ * categories, the title and message limits, the attachment rules, the roles
+ * and what they may do, the policy versions, the privacy request types, the
+ * optional storage categories, the account fields, the password and email
+ * rules, the blocked words and the filter that uses them. Each copy says
+ * "kept in step with" the other. This script is what makes sure: it loads
+ * both copies (and the lists written into models/schema.sql) and fails if
+ * any two differ.
  *
- * Run it from the repository root, once the backend's packages are installed
- * (the server's role check loads its database settings):
+ * Run it from the repository root, once both apps' packages are installed
+ * (`npm install` in frontend/ and in backend/): the server's role check loads
+ * its database settings, and the website's services/consent.js loads React.
  *
  *   node scripts/check-shared-lists.mjs
  *
@@ -28,13 +31,18 @@ const be = (path) => require(fileURLToPath(new URL(`backend/src/${path}`, root))
 
 const feWorkflow = await fe('data/workflow.js');
 const feCategories = await fe('data/categories.js');
+const fePostLimits = await fe('data/postLimits.js');
+const feAttachments = await fe('services/attachments.js');
 const feRoles = await fe('data/roles.js');
 const fePolicies = await fe('data/policies.js');
 const feAccount = await fe('data/accountFields.js');
 const feWords = await fe('data/blockedWords.js');
 const feModeration = await fe('services/moderation.js');
+const feConsent = await fe('services/consent.js');
 
 const beWorkflow = be('models/workflow.js');
+const beSuggestions = be('controllers/suggestionsController.js');
+const beFiles = be('models/files.js');
 const beAuth = be('middleware/auth.js');
 const bePolicies = be('models/policies.js');
 const beAccount = be('models/accountRules.js');
@@ -43,10 +51,16 @@ const beModeration = be('models/moderation.js');
 
 const schema = readFileSync(new URL('backend/src/models/schema.sql', root), 'utf8');
 
+// What schema.sql writes between "CREATE TABLE IF NOT EXISTS <table> (" and ");".
+function schemaTable(table) {
+  const block = schema.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${table} \\(([\\s\\S]*?)\\n\\);`));
+  if (!block) throw new Error(`schema.sql has no ${table} table`);
+  return block[1];
+}
+
 // The values a table's "CHECK (<column> IN ('a', 'b', ...))" allows in schema.sql.
 function schemaList(table, column) {
-  const block = schema.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${table} \\(([\\s\\S]*?)\\n\\);`));
-  const match = block?.[1].match(new RegExp(`CHECK \\(${column} IN \\(([^)]*)\\)\\)`));
+  const match = schemaTable(table).match(new RegExp(`CHECK \\(${column} IN \\(([^)]*)\\)\\)`));
   if (!match) throw new Error(`schema.sql has no CHECK list for ${table}.${column}`);
   return [...match[1].matchAll(/'([^']*)'/g)].map((m) => m[1]);
 }
@@ -100,6 +114,58 @@ check('categories (frontend and the rows schema.sql inserts)', () => {
   deepStrictEqual(feCategories.CATEGORIES.map(({ slug, label }) => [slug, label]), rows);
 });
 
+check('title and message limits (and the posts table)', () => {
+  const limits = ({ MIN_TITLE, MAX_TITLE, MIN_MESSAGE, MAX_MESSAGE }) => ({
+    MIN_TITLE,
+    MAX_TITLE,
+    MIN_MESSAGE,
+    MAX_MESSAGE,
+  });
+  deepStrictEqual(limits(fePostLimits), limits(beSuggestions));
+
+  // posts.title is "VARCHAR(<max>) ... CHECK (char_length(trim(title)) >= <min>)",
+  // and posts.message "CHECK (char_length(trim(message)) BETWEEN <min> AND <max>)".
+  const posts = schemaTable('posts');
+  const title = posts.match(/\btitle\s+VARCHAR\((\d+)\)[^,]*char_length\(trim\(title\)\) >= (\d+)/);
+  const message = posts.match(/char_length\(trim\(message\)\) BETWEEN (\d+) AND (\d+)/);
+  if (!title || !message) throw new Error('schema.sql has no length CHECK for posts.title or posts.message');
+  deepStrictEqual(
+    {
+      MIN_TITLE: Number(title[2]),
+      MAX_TITLE: Number(title[1]),
+      MIN_MESSAGE: Number(message[1]),
+      MAX_MESSAGE: Number(message[2]),
+    },
+    limits(beSuggestions)
+  );
+});
+
+check('attachment rules', () => {
+  // How many files, how big a file that is not a photo may be, and which
+  // such files are allowed at all.
+  deepStrictEqual(
+    {
+      files: feAttachments.MAX_FILES,
+      otherBytes: feAttachments.MAX_OTHER_BYTES,
+      otherTypes: feAttachments.OTHER_TYPES,
+    },
+    {
+      files: beFiles.MAX_ATTACHMENTS,
+      otherBytes: beFiles.MAX_OTHER_BYTES,
+      otherTypes: Object.keys(beFiles.FILE_TYPES).filter((type) => !beFiles.PHOTO_TYPES.includes(type)),
+    }
+  );
+  // Every photo leaves the browser redrawn as one type, which the server
+  // must take as a photo. (Their photo size limits differ on purpose: the
+  // browser's is for the original, before shrinking; the server's, for what
+  // arrives.)
+  const sentAs = feAttachments.PHOTO_SENT_AS;
+  deepStrictEqual(
+    { photosSentAs: sentAs, acceptedAsPhoto: beFiles.PHOTO_TYPES.includes(sentAs) },
+    { photosSentAs: sentAs, acceptedAsPhoto: true }
+  );
+});
+
 check('roles, and what each may do', () => {
   const roles = schemaList('users', 'role');
   deepStrictEqual(sorted(feRoles.ROLE_LIST.map((r) => r.key)), sorted(roles));
@@ -127,6 +193,10 @@ check('privacy request types and statuses', () => {
     sorted(Object.keys(fePolicies.PRIVACY_REQUEST_STATUSES)),
     sorted(schemaList('privacy_requests', 'status'))
   );
+});
+
+check('the optional storage categories', () => {
+  deepStrictEqual(sorted(feConsent.OPTIONAL_CATEGORIES), sorted(bePolicies.OPTIONAL_COOKIE_CATEGORIES));
 });
 
 check('account fields, and which a person may edit themselves', () => {

@@ -2,6 +2,8 @@ import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { CATEGORIES, labelForSlug } from '../data/categories.js';
 import { KIND_LIST, kindInfo } from '../data/workflow.js';
+// The shortest and longest title and message, kept the same as the server's.
+import { MIN_TITLE, MAX_TITLE, MIN_MESSAGE, MAX_MESSAGE } from '../data/postLimits.js';
 import { checkFields, rejectionMessage } from '../services/moderation.js';
 import { MAX_FILES, prepareAttachment } from '../services/attachments.js';
 import Button from './Button.jsx';
@@ -55,14 +57,6 @@ import { Notice } from './admin/ui.jsx';
  * - `.trim()`  Removes spaces from both ends of a string, so "   " does not
  *   count as a title.
  */
-
-// The shortest title and message we accept, so posts are not one-word
-// entries, and the longest. The server holds the same limits
-// (backend/src/controllers/suggestionsController.js).
-const MIN_TITLE = 5;
-const MAX_TITLE = 80;
-const MIN_MESSAGE = 10;
-const MAX_MESSAGE = 5000;
 
 // The look shared by all four fields - the two dropdowns, the title and the
 // message - so they line up and cannot drift apart one edit at a time.

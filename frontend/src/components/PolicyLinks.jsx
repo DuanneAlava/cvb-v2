@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { POLICY_PAGES } from '../data/policies.js';
 import { openCookieSettings } from '../services/consent.js';
 
 /*
@@ -15,12 +16,6 @@ import { openCookieSettings } from '../services/consent.js';
  * - className  placement
  */
 
-const POLICIES = [
-  { to: '/privacy-policy', label: 'Privacy Policy' },
-  { to: '/terms-and-conditions', label: 'Terms & Conditions' },
-  { to: '/cookie-policy', label: 'Cookie Policy' },
-];
-
 function PolicyLinks({ newTab = false, className = '' }) {
   const linkClass =
     'inline-flex min-h-[44px] items-center text-slate-600 underline-offset-2 hover:text-navy-700 hover:underline';
@@ -29,7 +24,7 @@ function PolicyLinks({ newTab = false, className = '' }) {
   return (
     <nav aria-label="Privacy and legal" className={className}>
       <ul className="flex flex-wrap items-center justify-center gap-x-4 text-sm">
-        {POLICIES.map((policy) => (
+        {POLICY_PAGES.map((policy) => (
           <li key={policy.to}>
             <Link to={policy.to} className={linkClass} {...tab}>
               {policy.label}

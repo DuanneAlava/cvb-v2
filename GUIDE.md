@@ -14,7 +14,7 @@ server talk to each other, and what is still left to do.
 | Project repo structure | `frontend/` and `backend/` as two independent apps, plus this guide at the root |
 | Tech stack chosen | React (frontend) + Node.js/Express (backend) + PostgreSQL (database) |
 | Folder structure & environment setup | `docker-compose.yml` brings up all three services with one command; `.env.example` files document every variable needed without Docker |
-| CI/CD pipeline skeleton | `.github/workflows/ci.yml` - on every push/PR: lints both apps, checks the lists both apps keep still match, runs the API tests and the migrations against a real Postgres service container, boots the API, builds the website, and builds every Docker image, development and production (section 3) |
+| CI/CD pipeline skeleton | `.github/workflows/ci.yml` - on every push/PR: lints both apps, runs the website tests, checks the lists both apps keep still match, runs the API tests and the migrations against a real Postgres service container, boots the API, builds the website, and builds every Docker image, development and production (section 3) |
 | Production setup | `docker-compose.prod.yml` - the built website behind nginx, the API and the database, with nothing exposed but the website (section 3b) |
 
 > Your original requirements doc listed Supabase in the tech stack. What was actually built
@@ -37,7 +37,7 @@ server talk to each other, and what is still left to do.
 | Checklist item | Where it lives now |
 |---|---|
 | Database schema | `backend/src/models/schema.sql` - accounts, categories, posts and their attachments, votes, internal notes, notifications, the activity log, and the privacy records (what each person agreed to, privacy requests, the privacy log) |
-| API endpoints | `backend/src/routes/` - see section 5 for the full list |
+| API endpoints | `backend/src/routes/` - the full list, with who may call each, is in [`docs/SYSTEM-ARCHITECTURE.md` section 7.3](docs/SYSTEM-ARCHITECTURE.md#73-api-surface) |
 | Authentication | JWT-based - `backend/src/controllers/authController.js` + `backend/src/middleware/auth.js` |
 | Local testing with Postman | `backend/postman/CampusVoiceBox.postman_collection.json` - import it and run top to bottom |
 
@@ -136,13 +136,14 @@ Sign in with it to manage the panel again. The promotion is written to the activ
 
 ### Checking a change
 
-Three checks run in CI on every push (`.github/workflows/ci.yml`). Run them yourself
+Four checks run in CI on every push (`.github/workflows/ci.yml`). Run them yourself
 first:
 
 | Check | Command | What it proves |
 |---|---|---|
 | Lint | `npm run lint`, in `frontend/` and in `backend/` | No ESLint errors or warnings. `frontend/.env` turns ESLint off inside the dev server and the build, so this is where it runs |
-| The shared lists | `node scripts/check-shared-lists.mjs`, from the project folder, once the backend's packages are installed | Every list the website and the server both keep - statuses and moves, kinds, departments, categories, roles, policy versions, privacy request types, account fields, the password and email rules, the blocked words and the filter itself - still matches |
+| The website tests | `npm test`, in `frontend/` - it keeps watching and re-runs on every save; `npm test -- --watchAll=false` runs once, as CI does | The rudeness filter blocks rude words however they are disguised and lets honest posts through; the workflow's moves all name real statuses; a new password's check names the right problem first; the review dialog offers only the moves the workflow allows. Each test file sits beside the file it tests (`*.test.js`, `*.test.jsx`) |
+| The shared lists | `node scripts/check-shared-lists.mjs`, from the project folder, once both apps' packages are installed (`npm install` in `frontend/` and `backend/`) | Every list the website and the server both keep - statuses and moves, kinds, departments, categories, the title and message limits, the attachment rules, roles, policy versions, privacy request types, the optional storage categories, account fields, the password and email rules, the blocked words and the filter itself - still matches |
 | The API tests | `npm test`, in `backend/` - see below | The real server and database, driven through sign-up, posting, review, voting, the privacy tools, password resets and account management - checking what each answers *and* what the activity log records |
 
 The API tests (`backend/test/api.test.js`) wipe the database they run on and load
@@ -412,31 +413,13 @@ on every device.
 
 ### The API
 
-| Method | Path | Who |
-|---|---|---|
-| GET | `/api/health` | anyone |
-| GET | `/api/state` | anyone (what you get depends on who you are) |
-| POST | `/api/auth/register`, `/api/auth/login` | anyone |
-| POST | `/api/auth/forgot-password`, `/api/auth/reset-password` | anyone - email a one-time reset link, then use it |
-| POST | `/api/auth/logout` | signed in |
-| POST | `/api/posts` | signed in, not suspended, current Terms accepted - with up to three photos or PDFs |
-| POST | `/api/posts/:id/vote` | signed in, not suspended, current Terms accepted - toggles your vote |
-| GET | `/api/attachments/:id` | anyone for a published post; the author and staff otherwise |
-| PATCH | `/api/account` | signed in - your own name and school details (school details only with your consent) |
-| PUT | `/api/account/photo` | signed in - your own profile photo |
-| PUT | `/api/account/password` | signed in - change your own password (needs the current one) |
-| POST | `/api/account/terms` | signed in - accept the current Terms |
-| PUT | `/api/account/school-consent`, `/api/account/cookie-consent` | signed in - your own consents |
-| GET | `/api/account/export` | signed in - everything held about you, as a JSON file |
-| POST | `/api/privacy-requests`, `/api/privacy-requests/:id/cancel` | signed in - your own requests |
-| GET | `/api/users/:id/photo` | that account, and staff |
-| PATCH | `/api/notifications/:id/read`, POST `/api/notifications/read-all` | signed in |
-| PATCH | `/api/admin/users/:id` (details), `/status`, `/role` | admin |
-| DELETE | `/api/admin/users/:id` | admin |
-| PATCH | `/api/admin/posts/:id/status`, `/assign`, `/resolve` | admin |
-| POST | `/api/admin/posts/:id/notes` | admin |
-| GET | `/api/admin/activity-logs` | admin - the whole log, for the export |
-| PATCH | `/api/admin/privacy-requests/:id` | `manage_privacy` - start, complete or decline; never your own |
+Every route, and exactly who may call it, is listed once:
+[`docs/SYSTEM-ARCHITECTURE.md`, section 7.3](docs/SYSTEM-ARCHITECTURE.md#73-api-surface).
+In short: `/api/health` and `/api/state` answer anyone (what `/state` sends depends
+on who is asking, above); `/api/auth/...` signs up, in and out and resets a forgotten
+password; a person's own posts, votes, account and privacy requests need them signed in;
+and everything under `/api/admin/...` needs an administrator, each route with its own
+permission.
 
 ### Protections on the server
 
@@ -459,16 +442,16 @@ on every device.
 
 | Setting | Where | What it is |
 |---|---|---|
-| `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` | backend | The database |
+| `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` | backend | The database (in Docker: user `cvb_user`, database `campusvoicebox`) |
 | `JWT_SECRET` | backend | What makes sign-in tokens impossible to forge. A long random value - `openssl rand -hex 32`. Required. |
 | `JWT_EXPIRES_IN` | backend | How long a sign-in lasts (default `7d`) |
 | `ADMIN_NAME`, `ADMIN_EMAIL`, `ADMIN_PASSWORD` | backend | The default administrator, created when the server starts if the database has none. The password needs at least 8 characters, with a letter and a number. Once the account exists, changing these does nothing - its password is changed from the admin's own profile, or with "Forgot password?" |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` | backend | The mail server that sends "Forgot password?" links - for example the school's Google Workspace (an *app password* as `SMTP_PASS`). Left empty while developing, the email is printed in the server's console instead. Required in production; like `ADMIN_PASSWORD`, `SMTP_PASS` belongs only in your own `.env` |
 | `APP_URL` | backend | The website's address, which the emailed reset link points to (default `http://localhost:3000`). Set it in production |
-| `CORS_ORIGIN` | backend | The website's address(es), comma-separated, if the website is on a different address from the API |
+| `CORS_ORIGIN` | backend | The website's address(es), comma-separated, if the website is on a different address from the API (default `http://localhost:3000`) |
 | `TRUST_PROXY` | backend | Set to `1` when a reverse proxy sits in front of the API, so the activity log and the rate limits see the visitor's address rather than the proxy's. `docker-compose.prod.yml` sets `1` for its nginx; `2` when HTTPS is handled by another proxy in front of that |
 | `POSTGRES_PASSWORD`, `HTTP_PORT` | `docker-compose.prod.yml` | The production database's password (required), and the port the website is published on (default `80`) - see `.env.production.example` |
-| `NODE_ENV` | backend | `production` turns on the strict `JWT_SECRET` check |
+| `NODE_ENV` | backend | `production` turns on the strict `JWT_SECRET` check (unset or `development` while developing) |
 | `PORT` | backend | Default `4000` |
 | `REACT_APP_API_URL` | frontend, when it is **built** | The API's address. Left unset, a production build uses `/api` on the website's own address, and development uses `http://localhost:4000/api` |
 
@@ -481,7 +464,7 @@ campusvoicebox/
 ├── docker-compose.yml          # brings up db + backend + frontend together (development)
 ├── docker-compose.prod.yml     # the same for real use: nginx + API + db (section 3b)
 ├── .env.production.example     # the settings docker-compose.prod.yml reads
-├── .github/workflows/ci.yml    # CI: lint, shared lists, API tests, builds
+├── .github/workflows/ci.yml    # CI: lint, website tests, shared lists, API tests, builds
 ├── scripts/check-shared-lists.mjs  # fails if the frontend's and backend's lists differ
 ├── docs/                       # manuals, architecture, code walkthrough, screenshots
 ├── frontend/
@@ -493,8 +476,8 @@ campusvoicebox/
 │   │   │   ├── student/        # Dashboard, Account
 │   │   │   └── admin/          # Dashboard, Submissions, Users, Analytics, Exports...
 │   │   ├── context/AuthContext.jsx
-│   │   ├── data/               # categories, roles, workflow, account fields, word lists,
-│   │   │                       # policy versions and the facts still to be confirmed
+│   │   ├── data/               # categories, roles, workflow, account fields, post limits,
+│   │   │                       # word lists, policy versions and the facts still to be confirmed
 │   │   ├── hooks/              # useApiFile, useFilterParams, useEscapeKey
 │   │   └── services/           # store.js (the data layer), api.js (every request),
 │   │                           # moderation.js (rudeness filter), attachments.js

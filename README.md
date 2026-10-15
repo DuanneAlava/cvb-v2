@@ -4,8 +4,8 @@ A web-based campus suggestion and voting platform. Students post suggestions or 
 concerns, upvote what matters to them, and filter by category.
 
 **Start here -> [GUIDE.md](./GUIDE.md)** for the full walkthrough: what's built, how to run
-it with Docker or by hand, how to check a change (lint, the shared-list check and the API
-tests), how to run it for real, and how the website talks to the server.
+it with Docker or by hand, how to check a change (lint, the website tests, the shared-list
+check and the API tests), how to run it for real, and how the website talks to the server.
 
 Quick start (Docker, development):
 ```bash

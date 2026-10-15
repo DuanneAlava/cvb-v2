@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { ORGANIZATION } from '../data/policies.js';
+import { ORGANIZATION, POLICY_PAGES } from '../data/policies.js';
 import BackButton from './BackButton.jsx';
 import { formatVersionDate } from './admin/ui.jsx';
 
@@ -23,12 +23,6 @@ import { formatVersionDate } from './admin/ui.jsx';
  * lists, links - are set once on the container with Tailwind's `[&_p]:`
  * selectors, so the pages themselves are just headings and sentences.
  */
-
-const OTHER_POLICIES = [
-  { to: '/privacy-policy', label: 'Privacy Policy' },
-  { to: '/terms-and-conditions', label: 'Terms & Conditions' },
-  { to: '/cookie-policy', label: 'Cookie Policy' },
-];
 
 const UNCONFIRMED = Object.values(ORGANIZATION).some((fact) => fact.value === null);
 
@@ -143,7 +137,7 @@ function PolicyPage({ title, version, summary, sections }) {
       <nav aria-label="Other policies" className="mt-10 border-t border-slate-200 pt-4 text-sm">
         <p className="text-slate-500">Also read:</p>
         <ul className="mt-1 flex flex-wrap gap-x-4">
-          {OTHER_POLICIES.filter((policy) => policy.label !== title).map((policy) => (
+          {POLICY_PAGES.filter((policy) => policy.label !== title).map((policy) => (
             <li key={policy.to}>
               <Link to={policy.to} className="inline-flex min-h-[44px] items-center font-semibold text-navy-700 hover:underline">
                 {policy.label}

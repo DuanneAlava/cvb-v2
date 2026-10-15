@@ -107,4 +107,14 @@ function sendFile(res, { name, type, data }) {
   res.end(data);
 }
 
-module.exports = { readAttachments, readProfilePhoto, sendFile };
+module.exports = {
+  readAttachments,
+  readProfilePhoto,
+  sendFile,
+  // For scripts/check-shared-lists.mjs, which checks the browser's copy of
+  // these rules (frontend/src/services/attachments.js) still matches.
+  FILE_TYPES,
+  PHOTO_TYPES,
+  MAX_ATTACHMENTS,
+  MAX_OTHER_BYTES,
+};

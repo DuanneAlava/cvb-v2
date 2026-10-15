@@ -403,6 +403,7 @@ INBOX      markNotificationRead · markAllNotificationsRead · fullActivityLog
 | `workflow.js` | 6 statuses (with `public` flag and legal `next` moves), 5 submission kinds, 11 departments, 8 notification types, audit action labels, badge/bar colour classes | — |
 | `categories.js` | 6 board categories with their chart colours | — |
 | `accountFields.js` | The account field list shared by the student account page and the admin user profile, and the password and email rules | — |
+| `postLimits.js` | The shortest and longest title and message a post may have | — |
 | `programs.js` | Course / year / section options for signup | — |
 | `blockedWords.js` | Profanity, insults, Filipino terms, phrases, and an always-allowed list | — |
 
@@ -908,20 +909,27 @@ two deliberate copies, and a change to one must be made to the other:
 | Statuses and their legal moves, kinds, departments | `frontend/src/data/workflow.js` | `backend/src/models/workflow.js` (+ the `CHECK`s in `schema.sql`) |
 | Categories | `frontend/src/data/categories.js` | the `INSERT INTO categories` rows in `schema.sql` |
 | Account fields, email and password rules | `frontend/src/data/accountFields.js` | `backend/src/models/accountRules.js` |
-| Title and message limits | `components/PostModal.jsx` | `controllers/suggestionsController.js` (+ the `CHECK`s) |
-| Attachment rules | `services/attachments.js` | `models/files.js` |
+| Title and message limits | `data/postLimits.js` (read by `components/PostModal.jsx`) | `controllers/suggestionsController.js` (+ the `CHECK`s on `posts` in `schema.sql`) |
+| Attachment rules — how many files, which kinds, the PDF size limit | `services/attachments.js` | `models/files.js` |
 | The rudeness filter and its word lists | `services/moderation.js`, `data/blockedWords.js` | `models/moderation.js`, `models/blockedWords.js` — the same code |
 | Policy versions, the cookie-choice version, privacy request types | `data/policies.js` | `models/policies.js` |
 | The optional storage categories | `services/consent.js` | `OPTIONAL_COOKIE_CATEGORIES` in `models/policies.js` |
 
 Each file says which other file is its twin, and `scripts/check-shared-lists.mjs`
 loads both copies and fails if they differ — CI runs it on every push. It covers
-the roles and permissions, the workflow lists, the categories, the account
-fields and the email and password rules, the policy versions and privacy
-request types, the word lists, and the filter itself (both copies are run on
-the same inputs). The title and message limits, the attachment rules and the
-storage categories are not checked yet: for those, the twin's name in each file
-is still the only guard.
+every row above: the roles and permissions, the workflow lists, the categories,
+the title and message limits (and the matching `CHECK`s in `schema.sql`), the
+attachment rules, the account fields and the email and password rules, the
+policy versions and privacy request types, the optional storage categories, the
+word lists, and the filter itself (both copies are run on the same inputs).
+
+The script loads each value by importing the file it lives in, never by reading
+its text, which is why the title and message limits sit in `data/postLimits.js`
+rather than in `PostModal.jsx`: plain Node cannot load a `.jsx` file. The one
+deliberate difference it allows is the photo size: the browser limits the
+original before shrinking it (8 MB), the server what arrives (1 MB) — so what is
+compared for photos is that the type the browser sends them as (`image/jpeg`) is
+one the server accepts.
 
 ---
 ---
@@ -1152,17 +1160,21 @@ the architecture — and each list is the definition of done for that change.
 
 ## 19. Testing strategy
 
-Stated honestly: **the API is tested automatically; the screens are tested by
-hand.** The server — where every rule is actually enforced — has an automated
-suite that runs on every push. The website has no automated tests of its own
-yet; it is checked with the manual matrix below.
+Stated honestly: **the API and the website's riskiest code are tested
+automatically; the screens as a whole are tested by hand.** The server — where
+every rule is actually enforced — has an automated suite that runs on every
+push. The website has focused tests for the code most worth protecting: the
+rudeness filter, the workflow vocabulary, the new-password check and the review
+dialog's buttons. Everything else on its screens is checked with the manual
+matrix below.
 
 ### What exists
 
 | Level | Mechanism | What it proves |
 |---|---|---|
 | **API tests** | `backend/test/api.test.js` (`npm test`, Node's built-in test runner), run in CI against a real Postgres 16. It wipes its database first, so it only runs on one whose name ends in `_test` | Sign-up, log-in, posting, the whole review workflow, voting, a person's own account, password resets, the privacy tools and account management answer what they should and refuse what they should not — and the activity log records who, from where and to what |
-| **List parity** | `scripts/check-shared-lists.mjs`, in CI | The lists kept on both sides (section 11) still match, and both copies of the rudeness filter give the same answers |
+| **Website tests** | `frontend/src/**/*.test.js[x]` (`npm test` in `frontend/` — Jest and jsdom, both already part of react-scripts), in CI | The rudeness filter blocks every listed word and phrase and their disguises — spaced out, digits for letters, stretched, accented — and lets honest posts through (`services/moderation.test.js`); every `next` move names a real status, every status can be reached, and `PUBLIC_STATUSES` and `ASSIGNABLE_KINDS` derive as intended (`data/workflow.test.js`); a new password's check names the rule first and the mismatch second (`data/accountFields.test.js`); and the review dialog offers exactly the moves `next` allows from each status, and loses a button when its move is taken out of `next` (`components/admin/SubmissionReview.test.jsx`) |
+| **List parity** | `scripts/check-shared-lists.mjs`, in CI | Every list kept on both sides (section 11) still matches, and both copies of the rudeness filter give the same answers |
 | **Lint** | `npm run lint` in both apps, in CI, with no warnings allowed | Unused code, missing hook dependencies and the like never accumulate |
 | **API contract** | Postman collection (`backend/postman/`), run top to bottom — login first, which stores the token for every later request | Each endpoint, tried by hand |
 | **Integration smoke** | CI boots the API against a real Postgres and hits `/api/health` | Migrations apply, the server starts, the database is reachable |
@@ -1188,16 +1200,18 @@ Run for any change that touches the workflow:
 
 ### What is missing, in priority order
 
-1. **Unit tests for `services/moderation.js`** — highest value per line of test
-   code in the whole project. It is a pure function with a list of known
-   inputs (`p0t4ng1naMoh` blocked, `assignment` allowed) and no dependencies.
-2. **Unit tests for `data/workflow.js` derivations** — that every status in a
-   `next` list exists; that `PUBLIC_STATUSES` and `ASSIGNABLE_KINDS` derive
-   correctly.
-3. **React Testing Library tests for `SubmissionReview`** — the dialog every
-   status change passes through.
-4. **Parity checks for the last three twin lists** (section 11) — the title
-   and message limits, the attachment rules and the storage categories.
+1. **Tests for the posting form (`components/PostModal.jsx`)** — the one
+   screen every student uses: that it refuses a title or message outside the
+   limits, a post the filter rejects, and a fourth attachment, before anything
+   is sent.
+2. **React Testing Library** — the review dialog's test draws it with React's
+   own `createRoot` and `act`, because the library is not installed and adding
+   a package is a decision of its own. Once more screens are tested,
+   `@testing-library/react` would make each test shorter and closer to how a
+   person uses the page: find a button by its name, click it, read what changed.
+3. **End-to-end tests** — the manual matrix above, driven through a real
+   browser against the whole stack (Playwright, for instance), so the paths
+   that cross both faces are checked on every push instead of by hand.
 
 ---
 
@@ -1206,17 +1220,16 @@ Run for any change that touches the workflow:
 `.github/workflows/ci.yml`, on every push and pull request to `main`:
 
 ```
-   ┌──────────────────────┐     ┌────────────────────────────────┐
-   │ frontend             │     │ backend                        │
-   │ node 24 · npm ci     │     │ node 24 · npm ci               │
-   │ npm run lint         │     │ postgres:16 service container  │
-   │ npm run build        │     │ npm run lint                   │
-   │                      │     │ check-shared-lists.mjs         │
-   │                      │     │ npm run db:migrate             │
-   │                      │     │ npm start & wait-on /api/health│
-   │                      │     │ npm test (the API tests)       │
-   └──────────┬───────────┘     └───────────────┬────────────────┘
-              └──────────┬──────────────────────┘
+   ┌──────────────────────────┐     ┌────────────────────────────────┐
+   │ frontend                 │     │ backend                        │
+   │ node 24 · npm ci         │     │ node 24 · npm ci               │
+   │ npm run lint             │     │ postgres:16 service container  │
+   │ npm test (website tests) │     │ npm run lint                   │
+   │ npm ci in backend/       │     │ npm run db:migrate             │
+   │ check-shared-lists.mjs   │     │ npm start & wait-on /api/health│
+   │ npm run build            │     │ npm test (the API tests)       │
+   └────────────┬─────────────┘     └───────────────┬────────────────┘
+                └────────┬──────────────────────────┘
                          ▼
               ┌────────────────────────┐
               │ docker-build           │   needs: [frontend, backend]
@@ -1233,14 +1246,18 @@ What each job is actually buying:
 - **frontend** — `npm run lint` fails on any ESLint error or warning, so an
   unused import or a missing hook dependency fails the job rather than
   accumulating. (`frontend/.env` turns ESLint off inside the build itself, which
-  is why it is a step of its own.) Then the production build.
-- **backend** — this is the job that matters. It lints, checks the lists kept
-  on both sides still match (section 11), runs the migrations against a *real*
-  Postgres 16 service container with a `pg_isready` healthcheck (which also
-  fills in the six categories), boots the server and curls `/api/health`, then
-  runs the API tests against the same Postgres. A schema change that does not
-  apply cleanly, or a change that breaks a rule the tests check, cannot reach
-  `main`.
+  is why it is a step of its own.) Then the website's tests (section 19), run
+  once with `--watchAll=false`. Then the check that the lists kept on both
+  sides still match (section 11): it loads files from both apps, and the
+  website's `services/consent.js` imports React, so it runs here, where the
+  website's packages already are, after installing the server's beside them.
+  Then the production build.
+- **backend** — this is the job that matters. It lints, runs the migrations
+  against a *real* Postgres 16 service container with a `pg_isready`
+  healthcheck (which also fills in the six categories), boots the server and
+  curls `/api/health`, then runs the API tests against the same Postgres. A
+  schema change that does not apply cleanly, or a change that breaks a rule
+  the tests check, cannot reach `main`.
 - **docker-build** — proves every image builds from a clean checkout — the two
   development images and the two production ones (`Dockerfile.prod`) — which is
   what catches a dependency that only exists on the developer's machine.
@@ -1278,28 +1295,13 @@ Two practices hold it together:
 ## 22. Release and deployment path
 
 Nothing has been deployed. Connecting the website to the API, hardening the
-server and the production setup (`docker-compose.prod.yml`, GUIDE.md section
-3b) are done; what is left before real use:
-
-```
-  1. CONFIGURE   On the server, copy .env.production.example to .env:
-                 POSTGRES_PASSWORD, a real JWT_SECRET (openssl rand -hex 32)
-                 - the server refuses to start without one - APP_URL, the
-                 default administrator and the school's SMTP settings.
-                 ↓
-  2. START       docker compose -f docker-compose.prod.yml up -d --build:
-                 the built website behind nginx, /api passed on to the API
-                 (NODE_ENV=production, runtime packages only), Postgres -
-                 with only the website published.
-                 ↓
-  3. TLS         Put it behind HTTPS - the host's, or a proxy such as Caddy -
-                 and set TRUST_PROXY=2. Schedule database backups.
-                 ↓
-  4. ADMIN       Log in as the default administrator and change that
-                 password from the admin profile.
-                 ↓
-  5. DEPLOY      Fill in the commented deploy job in ci.yml, if wanted.
-```
+server and the production setup (`docker-compose.prod.yml`) are done. How to
+start it on a server — the settings, the command, HTTPS in front of it and
+backups — is written once, in
+[GUIDE.md section 3b](../GUIDE.md#3b-running-it-for-real-production). After
+that: log in as the default administrator and change that password from the
+admin profile, and fill in the commented deploy job in `ci.yml` if wanted.
+The checklist below is what to confirm before real people use it.
 
 ### Pre-production checklist
 
@@ -1313,7 +1315,8 @@ server and the production setup (`docker-compose.prod.yml`, GUIDE.md section
 - [x] Attachments checked server-side for type, size and contents
 - [x] The status and kind lists in the schema, the server and the website agree
       — and CI fails if any shared list stops agreeing
-- [x] Automated API tests run in CI against a real Postgres
+- [x] Automated API tests run in CI against a real Postgres, and the
+      website's tests beside them
 - [x] A production setup: the built website behind nginx, the API without
       development tools and not as root, the database unpublished
 - [ ] `JWT_SECRET` is a generated secret, set in the environment, not in git
@@ -1333,11 +1336,11 @@ server and the production setup (`docker-compose.prod.yml`, GUIDE.md section
 | # | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|---|
 | 1 | The default administrator's password is left as the one in the server's settings | Medium | **Critical** — the panel in the wrong hands | The password rule is enforced when it is created; change it after the first log-in (section 22); `make-admin` and the role controls to recover |
-| 2 | A list kept in two places drifts (section 11) | Low | High — the server refuses what the website offers, or the other way round | Each file names its twin; `scripts/check-shared-lists.mjs` fails CI when any list it covers differs (section 11 names the three it does not cover yet) |
+| 2 | A list kept in two places drifts (section 11) | Low | High — the server refuses what the website offers, or the other way round | Each file names its twin; `scripts/check-shared-lists.mjs` fails CI when any of them differs |
 | 3 | Anonymous author identity leaked in an API response or export | Low | High — breaks the platform's core promise to students | Stripped in `/api/state` itself; identity columns opt-in on exports |
 | 4 | The only administrator loses their password | Low | High — locked out of the panel | "Forgot password?" emails a reset link; keep a second administrator; `npm run make-admin` on the server |
 | 5 | The database is lost | Low | **Critical** — every record, file and log entry | Managed Postgres with tested backups (section 22) |
-| 6 | No automated regression safety net | High | Medium — a workflow change silently breaks another path | Test priorities in section 19 |
+| 6 | A regression on a screen the automated tests do not reach | Medium | Medium — a workflow change silently breaks another path | The API and the website's riskiest code are tested in CI; the rest by the manual matrix; next test priorities in section 19 |
 | 7 | Single maintainer; knowledge concentrated | High | Medium | The walkthrough, the inline notes, and this document exist for exactly this reason |
 
 ---
@@ -1346,7 +1349,8 @@ server and the production setup (`docker-compose.prod.yml`, GUIDE.md section
 
 **In order of value:**
 
-- The moderation and workflow unit tests, and the parity tests (section 19)
+- Tests for the posting form, then end-to-end tests of the manual matrix
+  (section 19)
 - Production build, configuration and deploy job (section 22)
 - Email: verification at sign-up, and a password-reset link that does not need
   an administrator
@@ -1368,7 +1372,7 @@ campusVoiceBox/
 ├── docker-compose.yml              db + backend + frontend, one command (development)
 ├── docker-compose.prod.yml         the same for real use: nginx + API + db
 ├── .env.production.example         the settings the production setup reads
-├── .github/workflows/ci.yml        CI: lint · lists · API tests · migrate · boot · builds
+├── .github/workflows/ci.yml        CI: lint · website tests · lists · API tests · migrate · boot · builds
 ├── scripts/check-shared-lists.mjs  fails if the two sides' lists differ
 │
 ├── docs/
@@ -1385,12 +1389,13 @@ campusVoiceBox/
 │   ├── tailwind.config.js          brand palette + fade keyframes
 │   └── src/
 │       ├── App.js                  every route, and every guard
+│       ├── **/*.test.js[x]         the website's tests, each beside the file it tests
 │       ├── index.js · index.css
 │       ├── assets/                 OllcfLogo.jpg (campus photo) · OllcfSeal.png · CampusVoiceBoxLogo.png
 │       ├── context/AuthContext.jsx who is signed in
-│       ├── data/                   THE VOCABULARY — 7 files
+│       ├── data/                   THE VOCABULARY — 8 files
 │       │   roles · workflow · categories · accountFields
-│       │   programs · blockedWords · policies
+│       │   postLimits · programs · blockedWords · policies
 │       ├── services/               THE PLUMBING — 8 files
 │       │   store.js      the single data layer: the server's copy + the actions
 │       │   api.js        every request to the server, the token, file fetching
@@ -1449,26 +1454,10 @@ campusVoiceBox/
 | PostgreSQL | 5432 | — |
 | Production (`docker-compose.prod.yml`): nginx — the only published port | `HTTP_PORT`, default 80 | the website, and the API at `/api` |
 
-**Backend environment variables** (`backend/.env.example`)
-
-| Variable | Default | Notes |
-|---|---|---|
-| `PORT` | 4000 | |
-| `NODE_ENV` | development | `production` turns on the strict `JWT_SECRET` check |
-| `CORS_ORIGIN` | `http://localhost:3000` | Comma-separated allow-list |
-| `TRUST_PROXY` | *(unset)* | `1` behind a reverse proxy |
-| `PGHOST` / `PGPORT` / `PGUSER` / `PGPASSWORD` / `PGDATABASE` | local Postgres | `cvb_user` / `campusvoicebox` in Docker |
-| `JWT_SECRET` | *(must be set)* | Generate with `openssl rand -hex 32`; the server will not start without it |
-| `JWT_EXPIRES_IN` | `7d` | |
-| `ADMIN_NAME` / `ADMIN_EMAIL` / `ADMIN_PASSWORD` | *(set them)* | The default administrator, created at start-up when the database has none; ignored once it exists |
-| `SMTP_HOST` / `SMTP_PORT` / `SMTP_SECURE` / `SMTP_USER` / `SMTP_PASS` / `MAIL_FROM` | *(empty)* | The mail server for "Forgot password?" links. Empty while developing: the email is printed in the console. Required in production |
-| `APP_URL` | `http://localhost:3000` | The website's address, which reset links point to |
-
-**Frontend environment variable** (read when the site is built)
-
-| Variable | Default |
-|---|---|
-| `REACT_APP_API_URL` | `/api` in a production build; `http://localhost:4000/api` in development |
+**Environment variables.** Every setting the server, the website and the
+production setup read — with its default and what it is for — is listed once,
+in [GUIDE.md section 5, "Settings the server and website read"](../GUIDE.md#settings-the-server-and-website-read).
+`backend/.env.example` and `.env.production.example` are the files to copy.
 
 **One built-in account: the default administrator.** The database starts with
 no posts and no other accounts. When the server starts and finds no

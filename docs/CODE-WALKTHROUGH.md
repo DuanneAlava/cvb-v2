@@ -1713,6 +1713,14 @@ and fails if any two differ — the two rudeness filters are run on the same
 inputs, so a change to one filter's code is caught as well as a change to its
 words. CI runs both on every push.
 
+The website has tests of its own as well, each beside the file it tests and
+run with `npm test` in `frontend/`: `services/moderation.test.js` (rude words
+caught however they are disguised, honest posts let through),
+`data/workflow.test.js` (every move names a real status, and the derived lists
+come out right), `data/accountFields.test.js` (which password problem is named
+first) and `components/admin/SubmissionReview.test.jsx` (the review dialog
+offers only the moves the workflow allows). CI runs them too.
+
 ### G. Privacy, consent and the policies
 
 #### `services/consent.js`

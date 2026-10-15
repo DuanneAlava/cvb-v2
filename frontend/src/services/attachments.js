@@ -7,7 +7,8 @@
  * A 4000px camera picture comes out around 150KB, which is plenty for showing
  * what is broken on campus. The server checks every file again - its type,
  * its size and its contents (backend/src/models/files.js) - and holds the
- * same limits as this file.
+ * same limits as this file; scripts/check-shared-lists.mjs checks the two
+ * still agree.
  */
 
 // How many files one post may carry.
@@ -17,7 +18,15 @@ export const MAX_FILES = 3;
 const MAX_FILE_BYTES = 8 * 1024 * 1024; // 8MB
 
 // Files that are not photos cannot be shrunk, so they get a much lower limit.
-const MAX_OTHER_BYTES = 400 * 1024; // 400KB
+export const MAX_OTHER_BYTES = 400 * 1024; // 400KB
+
+// What every photo is sent as, whatever it started as: it is redrawn as a
+// JPEG before it leaves the device (shrinkImage, prepareProfilePhoto below).
+export const PHOTO_SENT_AS = 'image/jpeg';
+
+// The only files that are not photos which may be attached: PDFs, the one
+// kind of document every phone and computer can open.
+export const OTHER_TYPES = ['application/pdf'];
 
 // Photos are scaled down so neither side is longer than this, then saved as a
 // JPEG at this quality. Both numbers are a trade between file size and detail.
@@ -77,7 +86,7 @@ async function shrinkImage(dataUrl) {
   context.fillRect(0, 0, canvas.width, canvas.height);
   context.drawImage(image, 0, 0, canvas.width, canvas.height);
 
-  return canvas.toDataURL('image/jpeg', JPEG_QUALITY);
+  return canvas.toDataURL(PHOTO_SENT_AS, JPEG_QUALITY);
 }
 
 /*
@@ -102,16 +111,15 @@ export async function prepareAttachment(file) {
     const shrunk = await shrinkImage(dataUrl);
     return {
       name: file.name,
-      type: 'image/jpeg', // it is a JPEG now, whatever it started as
+      type: PHOTO_SENT_AS, // it is a JPEG now, whatever it started as
       size: shrunk.length,
       dataUrl: shrunk,
     };
   }
 
-  // EVERYTHING ELSE must be a PDF - the one kind of document every phone
-  // and computer can open. Anything else could not be viewed by whoever
-  // reviews it, and the server would refuse it anyway.
-  if (file.type !== 'application/pdf') {
+  // EVERYTHING ELSE must be a PDF (OTHER_TYPES). Anything else could not be
+  // viewed by whoever reviews it, and the server would refuse it anyway.
+  if (!OTHER_TYPES.includes(file.type)) {
     throw new Error(
       `"${file.name}" is not a photo or a PDF. Only photos and PDF files can be attached.`
     );
@@ -205,5 +213,5 @@ export async function prepareProfilePhoto(file) {
   context.imageSmoothingQuality = 'high';
   context.drawImage(image, sourceX, sourceY, side, side, 0, 0, size, size);
 
-  return canvas.toDataURL('image/jpeg', PROFILE_PHOTO_QUALITY);
+  return canvas.toDataURL(PHOTO_SENT_AS, PROFILE_PHOTO_QUALITY);
 }
