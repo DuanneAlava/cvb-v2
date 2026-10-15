@@ -3,29 +3,29 @@ import { useAuth } from '../context/AuthContext.jsx';
 import Logo from './Logo.jsx';
 import SearchBar from './SearchBar.jsx';
 import ProfileMenu from './ProfileMenu.jsx';
+import NavGreeting from './NavGreeting.jsx';
+import NotificationBell from './NotificationBell.jsx';
 import Button from './Button.jsx';
 
 /*
  * The navy bar pinned to the top of the page.
  *
- * It now holds three things and nothing else, left to right:
+ * Left to right:
  *
- *   1. the logo and the CampusVoiceBox name
+ *   1. the school seal, the logo and the CampusVoiceBox name
  *   2. the search box, with the category dropdown built into its left edge
- *   3. the profile circle
+ *   3. "Hi, Juan" with a waving hand, the notification bell (from 640px) and
+ *      the profile circle, or the Log in / Sign up buttons
  *
- * The row of category links that used to sit across the middle is gone. Those
- * categories now live in two places instead: the dropdown inside the search
- * box, and the "Browse by category" shortcuts inside the profile menu.
+ * The row of category links that used to sit across the middle is gone. The
+ * categories now live in one place: the dropdown inside the search box.
  *
- * ONE ROW AT EVERY WIDTH. On a phone the search box used to wrap onto a
- * second line under the logo and the buttons, which read as a separate bar
- * rather than part of this one. It now stays between the logo and the
- * buttons all the way down, and the room comes from three places: the
- * wordmark is dropped (the hexagon alone identifies the app), the category
- * dropdown becomes an icon (see SearchBar.jsx), and the buttons lose a
- * little padding. At 360px that leaves the search field about 90px of
- * typing room, which is a magnifier and a word - enough to search on.
+ * ONE ROW AT EVERY WIDTH. Logo, search box and profile circle share a line
+ * all the way down to a phone, and the room comes from three places: the
+ * wordmark is dropped (seal and hexagon still identify the app), the
+ * category dropdown becomes an icon (see SearchBar.jsx), the buttons lose a
+ * little padding, and the profile circle drops its chevron - which is what
+ * pays for the greeting beside it (see NavGreeting.jsx).
  *
  * WHAT YOU'LL MEET IN THIS FILE (plain-English notes)
  *
@@ -74,16 +74,20 @@ function Navbar() {
             aria-label="CampusVoiceBox home"
           >
             {/*
-              The wordmark is hidden on the narrowest phones, where the search
-              box needs the room. The hexagon on its own still identifies the
-              app, and the `aria-label` above keeps the link readable to screen
-              readers either way.
+              The school seal sits in front of the hexagon at every width -
+              it is the school's mark, and a phone is where most students
+              will see it. Only the WORDMARK is dropped on phones, because
+              the search box needs the room; "seal + hexagon" still says
+              whose app this is, and the `aria-label` above keeps the link
+              readable to screen readers either way. The marks themselves
+              are 32px on phones and 36px from `sm` up (see Logo.jsx), which
+              is what pays for the seal without squeezing the search field.
             */}
             <span className="hidden sm:block">
-              <Logo tone="light" />
+              <Logo tone="light" showSeal />
             </span>
             <span className="sm:hidden">
-              <Logo tone="light" showText={false} />
+              <Logo tone="light" showSeal showText={false} />
             </span>
           </Link>
 
@@ -105,14 +109,28 @@ function Navbar() {
             `min-w-0` lets the box shrink rather than pushing the bar wider
             than the window - on a phone it is what gives the field whatever
             the logo and the buttons leave.
+
+            SIGNED IN, IT KEEPS A MINIMUM WIDTH. The greeting beside it holds
+            the student's first name, and some first names are long; without
+            a floor, "Hi, Maximiliano" would squeeze the field down to
+            nothing. The floor leaves the dropdown plus about 40px to see what
+            is being typed, and the greeting gives way instead (see
+            NavGreeting.jsx). It follows the dropdown's own width (see
+            SELECT_WIDTH in SearchBar.jsx):
+              120px below `md`, where the dropdown is a 44px icon
+              208px from `md` up, where the dropdown is 128px wide
+            Signed out there is no floor - the auth buttons are a fixed
+            width, so nothing can squeeze the box.
           */}
-          <div className="min-w-0 flex-1 sm:max-w-2xl">
+          <div
+            className={`flex-1 sm:max-w-2xl ${user ? 'min-w-[7.5rem] md:min-w-[13rem]' : 'min-w-0'}`}
+          >
             <SearchBar />
           </div>
 
           {/*
-            3. THE RIGHT-HAND END: the profile menu once logged in, or the two
-            auth buttons before that.
+            3. THE RIGHT-HAND END: the greeting and the profile menu once
+            logged in, or the two auth buttons before that.
 
             `ml-auto` holds it against the right edge at every width. It is
             what collects the space left over once the search box has taken
@@ -122,10 +140,34 @@ function Navbar() {
             The buttons are a touch tighter on a phone - 10px of side padding
             instead of 14px - which is 16px handed back to the search field
             without either label losing its full 44px tap height.
+
+            Signed in, this end may shrink (`min-w-0`) - that is how a long
+            name gives way to the search box's 120px. Only the greeting's
+            text actually narrows; the profile circle stays 44px. Signed out
+            it may not (`shrink-0`), so "Log in" can never wrap onto two lines.
           */}
-          <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
+          <div
+            className={`ml-auto flex items-center gap-1.5 sm:gap-2 ${user ? 'min-w-0' : 'shrink-0'}`}
+          >
             {user ? (
-              <ProfileMenu />
+              /*
+                On a phone the greeting sits 8px from the circle (this 4px
+                gap plus the button's own 4px padding); from `sm` the bell
+                comes between them, and from `md` the greeting stands 16px
+                clear of the pair, as in the design. Below `md` the bar is at
+                its most crowded - a phone, or 640-767px where the wordmark
+                returns - so everything stays compact there and the search
+                box keeps the room.
+              */
+              <div className="flex min-w-0 items-center gap-1 md:gap-4">
+                <NavGreeting />
+                {/* The bell (from `sm` up - see NotificationBell.jsx) sits
+                    right beside the circle, as a pair. */}
+                <div className="flex shrink-0 items-center gap-1">
+                  <NotificationBell />
+                  <ProfileMenu />
+                </div>
+              </div>
             ) : (
               <>
                 <Link to="/login">
@@ -133,7 +175,14 @@ function Navbar() {
                     Log in
                   </Button>
                 </Link>
-                <Link to="/signup">
+                {/*
+                  "Sign up" only from 375px. Below that, the two buttons
+                  together took about 140px of a 320px screen and left the
+                  search box no room to type in at all. "Log in" stays, and
+                  the log-in page has a "Create an account" link, so signing
+                  up is still one tap further on.
+                */}
+                <Link to="/signup" className="hidden min-[375px]:block">
                   <Button variant="cream" size="sm" className="!px-2.5 sm:!px-3.5">
                     Sign up
                   </Button>

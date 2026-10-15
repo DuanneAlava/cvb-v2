@@ -11,10 +11,18 @@ import { ASSIGNABLE_KINDS, AWAITING_REVIEW, OPEN_STATUSES } from './data/workflo
 
 import Layout from './components/Layout.jsx';
 import AdminLayout from './components/admin/AdminLayout.jsx';
+import CookieConsent from './components/CookieConsent.jsx';
+import TermsGate from './components/TermsGate.jsx';
 
 import Home from './pages/Home.jsx';
 import Login from './pages/Login.jsx';
 import Signup from './pages/Signup.jsx';
+import ForgotPassword from './pages/ForgotPassword.jsx';
+import ResetPassword from './pages/ResetPassword.jsx';
+
+import PrivacyPolicy from './pages/legal/PrivacyPolicy.jsx';
+import TermsAndConditions from './pages/legal/TermsAndConditions.jsx';
+import CookiePolicy from './pages/legal/CookiePolicy.jsx';
 
 import StudentDashboard from './pages/student/Dashboard.jsx';
 import Account from './pages/student/Account.jsx';
@@ -30,12 +38,17 @@ import Departments from './pages/admin/Departments.jsx';
 import Exports from './pages/admin/Exports.jsx';
 import System from './pages/admin/System.jsx';
 import AdminProfile from './pages/admin/AdminProfile.jsx';
+import PrivacyRequests from './pages/admin/PrivacyRequests.jsx';
 
 /*
  * THE WHOLE PLATFORM'S ROUTING, IN ONE PLACE.
  *
  *   /                      the public board       - open to everyone
+ *   /privacy-policy, /terms-and-conditions, /cookie-policy
+ *                          the policies           - open to everyone
  *   /login, /signup        one door for everybody - signed-out only
+ *   /forgot-password, /reset-password
+ *                          a forgotten password, reset by emailed link
  *   /student/dashboard     a person's own submissions
  *   /account               a person's own details
  *   /admin/...             the management side    - VIEW_ADMIN only
@@ -73,30 +86,40 @@ import AdminProfile from './pages/admin/AdminProfile.jsx';
  * - <Navigate to="..." replace />  A redirect, expressed as an element.
  * - The `*` path  Matches anything nothing else matched: the catch-all.
  * - <AuthProvider>  Wraps everything so every page can ask who is signed in.
+ *
+ * DRAWN ON EVERY PAGE, OUTSIDE THE ROUTES
+ * <CookieConsent /> - the cookie banner on a first visit, and the cookie
+ * settings window that "Cookie settings" opens from anywhere - and
+ * <TermsGate />, which asks a signed-in account to accept the Terms when
+ * the version it accepted is no longer enough. They sit beside <Routes>, not
+ * in a layout, because the log-in pages and the admin panel have layouts of
+ * their own and both must still appear there.
  */
 function App() {
   return (
     <AuthProvider>
       <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+        <CookieConsent />
+        <TermsGate />
         <Routes>
           {/* ---------------------------------------------------------- *
            * PUBLIC - the student-facing board
            * ---------------------------------------------------------- */}
           <Route element={<Layout />}>
             {/*
-              The board, for students and signed-out visitors. An admin who
-              lands here is forwarded to the admin panel instead - the board
-              is not their home, and dropping a moderator onto the student
-              feed on every reload made them navigate back by hand.
+              The board, for everybody: students, signed-out visitors, and the
+              administrator, who can use the student side too - read, post
+              and vote. Logging in still takes an admin to the admin
+              dashboard; "View site" in the panel's top bar brings them here,
+              and "Admin panel" in the profile menu takes them back.
             */}
-            <Route
-              index
-              element={
-                <AdminHomeRedirect>
-                  <Home />
-                </AdminHomeRedirect>
-              }
-            />
+            <Route index element={<Home />} />
+
+            {/* The policies - readable by anybody, signed in or not, admins
+                included, so a link to one works from everywhere. */}
+            <Route path="/privacy-policy" element={<PrivacyPolicy />} />
+            <Route path="/terms-and-conditions" element={<TermsAndConditions />} />
+            <Route path="/cookie-policy" element={<CookiePolicy />} />
           </Route>
 
           {/* ---------------------------------------------------------- *
@@ -118,6 +141,10 @@ function App() {
               </RedirectIfSignedIn>
             }
           />
+          {/* A forgotten password. Open whether signed in or not: asking
+              needs only an email, and the emailed link proves the rest. */}
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
 
           {/* ---------------------------------------------------------- *
            * SIGNED IN - any role
@@ -220,6 +247,12 @@ function App() {
 
               <Route element={<RequirePermission permission={PERMISSIONS.VIEW_AUDIT_LOG} />}>
                 <Route path="activity" element={<ActivityLogs />} />
+              </Route>
+
+              {/* People's requests about their own information - not moderation,
+                  so it has its own permission. */}
+              <Route element={<RequirePermission permission={PERMISSIONS.MANAGE_PRIVACY} />}>
+                <Route path="privacy" element={<PrivacyRequests />} />
               </Route>
 
               {/*

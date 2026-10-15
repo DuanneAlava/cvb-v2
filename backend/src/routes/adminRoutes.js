@@ -1,53 +1,67 @@
 const express = require('express');
 const pool = require('../config/db');
-const { requireAuth, requirePermission } = require('../middleware/auth');
+const { can, requireAuth, requirePermission, ROLE_PERMISSIONS } = require('../middleware/auth');
+const { STATUSES, KINDS, DEPARTMENTS } = require('../models/workflow');
+const { writeActivityLog } = require('../models/activityLog');
+const { writePrivacyEvent } = require('../models/privacyEvents');
+const { inTransaction } = require('../models/transaction');
+const { PRIVACY_REQUEST_TYPES } = require('../models/policies');
+const {
+  ADMIN_EDITABLE,
+  readAccountFields,
+  changedLabels,
+  schoolDetailsRefused,
+} = require('../models/accountRules');
+const { toId, shapeLogEntry } = require('../models/shape');
 
 /*
  * THE ADMIN API.
  *
- * Everything the admin panel needs, and nothing a student can reach.
+ * Everything the admin panel changes, and nothing a student can reach. What
+ * the panel SHOWS comes from GET /api/state, which sends an administrator
+ * every record (controllers/stateController.js).
  *
  * THE ONE RULE IN THIS FILE
  * Every route below carries its own requirePermission(...). Not one of them
  * relies on the frontend having hidden a button, because a hidden button is
- * not a check - it is a suggestion, and curl ignores it.
+ * not a check - it is a suggestion, and curl ignores it. For the same reason
+ * the workflow is enforced here too: a status move the review dialog would
+ * never offer is refused (models/workflow.js).
  *
  * requireAuth is applied once to the whole router, so a route physically
  * cannot be added here without at least being authenticated; the per-route
- * permission is then the second gate. requirePermission re-reads the account's
- * role from the database rather than trusting the token, so demoting or
- * suspending somebody takes effect immediately instead of when their token
- * happens to expire.
+ * permission is then the second gate. Both read the account fresh from the
+ * database rather than trusting the token, so demoting or suspending
+ * somebody takes effect immediately instead of when their token expires.
  *
- * ANONYMITY
- * The identity of an anonymous poster is returned by these endpoints and by
- * no others. The public /posts endpoint must keep leaving author details out
- * of anonymous rows - see the note in models/schema.sql.
+ * Every change writes its activity-log entry, and tells the student, inside
+ * the same transaction - all three happen, or none does.
  */
 
 /*
  * WHAT YOU'LL MEET IN THIS FILE (plain-English notes)
  *
  * - express.Router()  A group of related routes that is mounted at one path
- *   (here /admin, in routes/index.js). `router.get('/users', ...)` therefore
- *   answers GET /admin/users.
+ *   (here /admin, in routes/index.js). `router.patch('/users/:id', ...)`
+ *   therefore answers PATCH /admin/users/12.
  * - HTTP verbs  GET reads, POST creates, PATCH changes part of something,
  *   DELETE removes. Each route is one verb at one path.
  * - `router.use(requireAuth)`  Apply a middleware to every route below it.
  * - `requirePermission('manage_users')` as a route argument  Middleware
  *   given per route, between the path and the handler. It runs first; the
  *   handler only runs if it calls next().
- * - `req.params.id` / `req.query.search` / `req.body.status`  The three
- *   places input arrives: the address (/users/:id), the query string, and
- *   the JSON body of a POST or PATCH.
+ * - `req.params.id` / `req.body.status`  Where input arrives: the address
+ *   (/users/:id) and the JSON body of a POST or PATCH.
  * - `res.status(400).json({ error })`  Reply with an HTTP status code and a
  *   JSON body. 400 = bad input, 401 = not signed in, 403 = not allowed,
- *   404 = not found, 204 = done, nothing to return.
+ *   404 = not found, 409 = it has changed since you looked, 204 = done,
+ *   nothing to return.
  * - A "transaction"  Several database statements that must all succeed or
  *   all be undone together (BEGIN ... COMMIT, or ROLLBACK on error). See
- *   inTransaction() below.
- * - `RETURNING id, title`  Ask an UPDATE or DELETE to hand back the row it
- *   touched, so we do not need a second query to read it.
+ *   inTransaction() in models/transaction.js.
+ * - `SELECT ... FOR UPDATE`  Read a row and hold it until the transaction
+ *   ends, so two administrators acting on the same submission at once take
+ *   turns instead of overwriting each other.
  * - `next(err)`  Hand an error to the app's error handler (middleware/
  *   errorHandler.js) instead of crashing the process.
  */
@@ -57,190 +71,188 @@ const router = express.Router();
 // Nothing in this file is reachable without a valid token.
 router.use(requireAuth);
 
+const MISSING_POST = 'That submission no longer exists.';
+const MISSING_ACCOUNT = 'That account no longer exists.';
+
 /* ------------------------------------------------------------------ *
  * Helpers
  * ------------------------------------------------------------------ */
 
 /*
- * Write an audit entry. Called by the handlers themselves rather than left to
- * the caller, so an administrative action cannot quietly skip being recorded.
+ * Write an audit entry for the administrator making this request. Called by
+ * the handlers themselves rather than left to the caller, so an
+ * administrative action cannot quietly skip being recorded. The INSERT itself
+ * is shared - see models/activityLog.js.
  */
-async function writeLog(client, req, action, { targetType, targetId, details }) {
-  await client.query(
-    `INSERT INTO activity_logs
-       (admin_id, admin_name, admin_role, action, target_type, target_id, details, ip_address)
-     VALUES ($1, (SELECT name FROM users WHERE id = $1), $2, $3, $4, $5, $6, $7)`,
-    [req.user.id, req.user.role, action, targetType, String(targetId), details, req.ip]
-  );
-}
-
-// Queue a notification for the student who wrote a post.
-async function notifyAuthor(client, postId, type, { title, body, link }) {
-  await client.query(
-    `INSERT INTO notifications (type, audience, user_id, post_id, title, body, link)
-     VALUES ($1, 'author', (SELECT author_id FROM posts WHERE id = $2), $2, $3, $4, $5)`,
-    [type, postId, title, body, link]
-  );
+function writeLog(client, req, action, { targetType, targetId, details }) {
+  return writeActivityLog(client, {
+    adminId: req.user.id,
+    adminName: req.user.name,
+    adminRole: req.user.role,
+    action,
+    targetType,
+    targetId,
+    details,
+    ip: req.ip,
+  });
 }
 
 /*
- * Run a set of statements as one transaction.
- *
- * Changing a status, writing the audit entry and notifying the student have to
- * succeed or fail together. A half-applied approval - the post published but
- * nobody told, or told but not published - is worse than a failed one.
+ * Tell a post's author what happened to it. No link is saved with it: a
+ * student reads their notifications on their own dashboard, so there is
+ * nowhere further to send them. A post whose author's account was deleted
+ * has nobody to tell.
  */
-async function inTransaction(handler) {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const result = await handler(client);
-    await client.query('COMMIT');
-    return result;
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
+async function notifyAuthor(client, post, type, { title, body }) {
+  if (!post.author_id) return;
+  await client.query(
+    `INSERT INTO notifications (type, audience, user_id, post_id, title, body)
+     VALUES ($1, 'author', $2, $3, $4, $5)`,
+    [type, post.author_id, post.id, title, body]
+  );
 }
 
-/* ------------------------------------------------------------------ *
- * DASHBOARD
- * ------------------------------------------------------------------ */
+// A post, held for the rest of the transaction - or null if it is gone.
+async function lockPost(client, id) {
+  if (!id) return null;
+  const { rows } = await client.query('SELECT * FROM posts WHERE id = $1 FOR UPDATE', [id]);
+  return rows[0] ?? null;
+}
 
-router.get('/stats', requirePermission('view_admin'), async (req, res, next) => {
-  try {
-    // One round trip rather than a dozen: the dashboard loads on every visit.
-    const { rows } = await pool.query(`
-      SELECT
-        (SELECT count(*) FROM users)                                            AS total_users,
-        (SELECT count(*) FROM users WHERE status = 'active'
-           AND last_login_at > now() - interval '30 days')                      AS active_users,
-        (SELECT count(*) FROM users WHERE created_at > now() - interval '7 days') AS new_users,
-        (SELECT count(*) FROM users WHERE status = 'suspended')                 AS suspended_users,
-        (SELECT count(*) FROM posts)                                            AS total_posts,
-        (SELECT count(*) FROM posts WHERE status IN
-           ('pending','under_review','needs_revision'))                         AS pending_posts,
-        (SELECT count(*) FROM posts WHERE status IN
-           ('approved','assigned','in_progress','resolved','closed'))           AS approved_posts,
-        (SELECT count(*) FROM posts WHERE status = 'rejected')                  AS rejected_posts,
-        (SELECT count(*) FROM posts WHERE kind IN
-           ('suggestion','feedback','request'))                                 AS total_suggestions,
-        (SELECT count(*) FROM posts WHERE kind IN
-           ('concern','complaint','report'))                                    AS total_concerns,
-        (SELECT count(*) FROM posts WHERE status IN
-           ('approved','assigned','in_progress'))                               AS open_concerns,
-        (SELECT count(*) FROM posts WHERE status IN ('resolved','closed'))      AS resolved_concerns,
-        (SELECT count(*) FROM posts WHERE kind = 'report')                      AS total_reports,
-        (SELECT avg(extract(epoch FROM (resolved_at - created_at)) / 86400)
-           FROM posts WHERE resolved_at IS NOT NULL)                            AS avg_resolution_days
-    `);
-    res.json(rows[0]);
-  } catch (err) {
-    next(err);
-  }
-});
+// The refusal for a move the workflow does not allow from where a post is now.
+function cannotMove(post, wanted) {
+  return `This submission is ${STATUSES[post.status].label}, so it cannot be ${wanted} from here.`;
+}
+
+// Is this the administrator's own account? Several actions refuse it.
+const isSelf = (req, id) => id === req.user.id;
+
+/*
+ * Delete an account - from the Users page, or to complete a deletion
+ * request. Votes are always kept (votes.user_id is ON DELETE SET NULL - see
+ * models/schema.sql): quietly changing a result after the fact would be the
+ * wrong kind of tidy. Submissions are kept too, without an owner, unless
+ * `deletePosts` - a choice made when handling the person's own deletion
+ * request - removes them with their files and the votes on them.
+ * Answers the deleted account's name and email, or null if it was gone.
+ */
+async function deleteAccount(client, req, id, { deletePosts = false } = {}) {
+  if (deletePosts) await client.query('DELETE FROM posts WHERE author_id = $1', [id]);
+
+  const { rows } = await client.query('DELETE FROM users WHERE id = $1 RETURNING name, email', [id]);
+  if (!rows[0]) return null;
+
+  await writeLog(client, req, 'user_deleted', {
+    targetType: 'user',
+    targetId: id,
+    details: `${rows[0].name} (${rows[0].email}) - their submissions were ${deletePosts ? 'deleted too' : 'kept'}`,
+  });
+  return rows[0];
+}
 
 /* ------------------------------------------------------------------ *
  * USERS
  * ------------------------------------------------------------------ */
 
-router.get('/users', requirePermission('manage_users'), async (req, res, next) => {
+/*
+ * Correct somebody's details - including the email, which only an
+ * administrator may change. The log names only the fields that actually
+ * changed; a save that changes nothing is not logged at all.
+ */
+router.patch('/users/:id', requirePermission('manage_users'), async (req, res, next) => {
+  const id = toId(req.params.id);
+  const { values, error } = readAccountFields(req.body, ADMIN_EDITABLE);
+  if (error) return res.status(400).json({ error });
+
   try {
-    const { search, role, status } = req.query;
+    const result = await inTransaction(async (client) => {
+      const { rows } = await client.query('SELECT * FROM users WHERE id = $1 FOR UPDATE', [id]);
+      const account = rows[0];
+      if (!account) return { status: 404, error: MISSING_ACCOUNT };
 
-    /*
-     * Parameterised, always. Pasting req.query into SQL is how an admin search
-     * box becomes an injection hole - and this one is searched by the people
-     * with the most access.
-     */
-    const { rows } = await pool.query(
-      `SELECT u.id, u.name, u.email, u.role, u.status, u.student_id, u.course,
-              u.year_level, u.section, u.created_at, u.last_login_at,
-              (SELECT count(*) FROM posts p WHERE p.author_id = u.id) AS post_count,
-              (SELECT count(*) FROM posts p WHERE p.author_id = u.id
-                 AND p.kind IN ('concern','complaint','report'))      AS concern_count
-         FROM users u
-        WHERE ($1::text IS NULL OR u.name ILIKE '%' || $1 || '%'
-                                OR u.email ILIKE '%' || $1 || '%'
-                                OR u.student_id ILIKE '%' || $1 || '%')
-          AND ($2::text IS NULL OR u.role = $2)
-          AND ($3::text IS NULL OR u.status = $3)
-        ORDER BY u.created_at DESC`,
-      [search || null, role || null, status || null]
-    );
-    res.json(rows);
-  } catch (err) {
-    next(err);
-  }
-});
+      // School details are kept only with the person's own consent - an
+      // administrator cannot add them to an account that has not given it.
+      if (schoolDetailsRefused(values, { hasConsent: Boolean(account.school_consent_at), current: account })) {
+        return {
+          status: 400,
+          error: 'This person has not agreed to CampusVoiceBox keeping their school details, so they cannot be added or changed.',
+        };
+      }
 
-router.get('/users/:id', requirePermission('manage_users'), async (req, res, next) => {
-  try {
-    const { rows } = await pool.query(
-      `SELECT id, name, email, role, status, student_id, course, year_level,
-              section, avatar_url, created_at, last_login_at
-         FROM users WHERE id = $1`,
-      [req.params.id]
-    );
-    if (!rows[0]) return res.status(404).json({ error: 'Account not found.' });
+      if (values.email && values.email !== account.email) {
+        const owner = await client.query('SELECT 1 FROM users WHERE email = $1', [values.email]);
+        if (owner.rows.length > 0) {
+          return { status: 400, error: 'Another account already uses that email address.' };
+        }
+      }
 
-    const posts = await pool.query(
-      'SELECT * FROM posts WHERE author_id = $1 ORDER BY created_at DESC',
-      [req.params.id]
-    );
-    res.json({ user: rows[0], submissions: posts.rows });
+      const changed = changedLabels(account, values);
+      if (changed.length === 0) return {};
+
+      const columns = Object.keys(values);
+      await client.query(
+        `UPDATE users SET ${columns.map((column, index) => `${column} = $${index + 2}`).join(', ')}
+          WHERE id = $1`,
+        [id, ...columns.map((column) => values[column])]
+      );
+      await writeLog(client, req, 'user_updated', {
+        targetType: 'user',
+        targetId: id,
+        details: `Updated ${changed.join(', ')} on ${values.name ?? account.name}`,
+      });
+      return {};
+    });
+
+    if (result.error) return res.status(result.status).json({ error: result.error });
+    res.status(204).end();
   } catch (err) {
     next(err);
   }
 });
 
 router.patch('/users/:id/status', requirePermission('manage_users'), async (req, res, next) => {
+  const id = toId(req.params.id);
   const { status } = req.body;
   if (!['active', 'suspended'].includes(status)) {
     return res.status(400).json({ error: 'Status must be active or suspended.' });
   }
 
   // Suspending yourself would lock you out of the panel you administer.
-  if (String(req.user.id) === String(req.params.id)) {
+  if (isSelf(req, id)) {
     return res.status(400).json({ error: 'You cannot change your own account status.' });
   }
 
   try {
-    const result = await inTransaction(async (client) => {
+    const done = await inTransaction(async (client) => {
       const { rows } = await client.query(
-        'UPDATE users SET status = $1 WHERE id = $2 RETURNING id, name, status',
-        [status, req.params.id]
+        'UPDATE users SET status = $1 WHERE id = $2 RETURNING id, name',
+        [status, id]
       );
-      if (!rows[0]) return null;
+      if (!rows[0]) return false;
 
-      await writeLog(client, req, status === 'suspended' ? 'user_suspended' : 'user_activated', {
+      const suspended = status === 'suspended';
+      await writeLog(client, req, suspended ? 'user_suspended' : 'user_activated', {
         targetType: 'user',
-        targetId: req.params.id,
+        targetId: id,
         details: rows[0].name,
       });
-
       await client.query(
         `INSERT INTO notifications (type, audience, user_id, title, body)
          VALUES ($1, 'author', $2, $3, $4)`,
         [
-          status === 'suspended' ? 'account_suspended' : 'account_activated',
-          req.params.id,
-          status === 'suspended'
-            ? 'Your account has been suspended'
-            : 'Your account is active again',
-          status === 'suspended'
+          suspended ? 'account_suspended' : 'account_activated',
+          id,
+          suspended ? 'Your account has been suspended' : 'Your account is active again',
+          suspended
             ? 'You can still read the board, but posting and voting are turned off.'
             : 'You can post and vote again.',
         ]
       );
-
-      return rows[0];
+      return true;
     });
 
-    if (!result) return res.status(404).json({ error: 'Account not found.' });
-    res.json(result);
+    if (!done) return res.status(404).json({ error: MISSING_ACCOUNT });
+    res.status(204).end();
   } catch (err) {
     next(err);
   }
@@ -252,62 +264,52 @@ router.patch('/users/:id/status', requirePermission('manage_users'), async (req,
  * being used to promote or demote the account holding it.
  */
 router.patch('/users/:id/role', requirePermission('manage_admins'), async (req, res, next) => {
+  const id = toId(req.params.id);
   const { role } = req.body;
-  if (!['admin', 'student', 'user'].includes(role)) {
+  // The roles that exist are the ones with a permission list (middleware/auth.js).
+  if (!Object.hasOwn(ROLE_PERMISSIONS, String(role))) {
     return res.status(400).json({ error: 'Unknown role.' });
   }
-  if (String(req.user.id) === String(req.params.id)) {
+  if (isSelf(req, id)) {
     return res.status(400).json({ error: 'You cannot change your own role.' });
   }
 
   try {
-    const result = await inTransaction(async (client) => {
-      const { rows } = await client.query(
-        'UPDATE users SET role = $1 WHERE id = $2 RETURNING id, name, role',
-        [role, req.params.id]
-      );
-      if (!rows[0]) return null;
+    const done = await inTransaction(async (client) => {
+      const { rows } = await client.query('SELECT name, role FROM users WHERE id = $1 FOR UPDATE', [
+        id,
+      ]);
+      if (!rows[0]) return false;
 
+      await client.query('UPDATE users SET role = $1 WHERE id = $2', [role, id]);
       await writeLog(client, req, 'role_changed', {
         targetType: 'user',
-        targetId: req.params.id,
-        details: `${rows[0].name} to ${role}`,
+        targetId: id,
+        details: `${rows[0].name}: ${rows[0].role} to ${role}`,
       });
-      return rows[0];
+      return true;
     });
 
-    if (!result) return res.status(404).json({ error: 'Account not found.' });
-    res.json(result);
+    if (!done) return res.status(404).json({ error: MISSING_ACCOUNT });
+    res.status(204).end();
   } catch (err) {
     next(err);
   }
 });
 
 router.delete('/users/:id', requirePermission('delete_users'), async (req, res, next) => {
-  if (String(req.user.id) === String(req.params.id)) {
+  const id = toId(req.params.id);
+  if (isSelf(req, id)) {
     return res.status(400).json({ error: 'You cannot delete your own account.' });
   }
 
   try {
-    const result = await inTransaction(async (client) => {
-      const { rows } = await client.query(
-        'DELETE FROM users WHERE id = $1 RETURNING name, email',
-        [req.params.id]
-      );
-      if (!rows[0]) return null;
+    // From the Users page, an account's submissions are always kept: erasing
+    // concerns staff may still be working on is not a side effect of tidying
+    // up accounts. Deleting them is only ever done at the person's request.
+    const done = await inTransaction((client) => deleteAccount(client, req, id));
 
-      // posts.author_id is ON DELETE SET NULL, so their submissions survive.
-      // Erasing concerns that staff may still be working on would be the
-      // wrong kind of tidy.
-      await writeLog(client, req, 'user_deleted', {
-        targetType: 'user',
-        targetId: req.params.id,
-        details: `${rows[0].name} (${rows[0].email}) - submissions kept`,
-      });
-      return rows[0];
-    });
-
-    if (!result) return res.status(404).json({ error: 'Account not found.' });
+    if (!done) return res.status(404).json({ error: MISSING_ACCOUNT });
     res.status(204).end();
   } catch (err) {
     next(err);
@@ -319,244 +321,68 @@ router.delete('/users/:id', requirePermission('delete_users'), async (req, res, 
  * ------------------------------------------------------------------ */
 
 /*
- * The admin view of the board. Unlike the public /posts endpoint this returns
- * every status and joins the author in, including for anonymous posts - that
- * is what the view_identity permission is for.
+ * Approve, reject, send back to review, reopen - every move that carries no
+ * more than a reason. Resolving has its own route below, because it needs a
+ * summary of what was done.
  */
-router.get('/posts', requirePermission('view_admin'), async (req, res, next) => {
-  try {
-    const { status, kind, category, priority, search } = req.query;
-
-    const { rows } = await pool.query(
-      `SELECT p.*,
-              u.name AS author_name, u.email AS author_email,
-              u.student_id AS author_student_id,
-              (SELECT count(*) FROM votes v WHERE v.post_id = p.id) AS vote_count
-         FROM posts p
-         LEFT JOIN users u ON u.id = p.author_id
-        WHERE ($1::text IS NULL OR p.status = $1)
-          AND ($2::text IS NULL OR p.kind = $2)
-          AND ($3::text IS NULL OR p.category_slug = $3)
-          AND ($4::text IS NULL OR p.priority = $4)
-          AND ($5::text IS NULL OR p.title ILIKE '%' || $5 || '%'
-                                OR p.message ILIKE '%' || $5 || '%'
-                                OR u.name ILIKE '%' || $5 || '%'
-                                OR u.email ILIKE '%' || $5 || '%'
-                                OR u.student_id ILIKE '%' || $5 || '%')
-        ORDER BY p.created_at DESC`,
-      [status || null, kind || null, category || null, priority || null, search || null]
-    );
-    res.json(rows);
-  } catch (err) {
-    next(err);
-  }
-});
-
-const ALLOWED_STATUSES = [
-  'pending', 'under_review', 'needs_revision', 'rejected', 'approved',
-  'assigned', 'in_progress', 'resolved', 'closed', 'archived',
-];
-
-// Approve, reject, request a revision, or move a submission along.
 router.patch('/posts/:id/status', requirePermission('moderate_posts'), async (req, res, next) => {
-  const { status, reason, note } = req.body;
+  const id = toId(req.params.id);
+  const status = String(req.body.status ?? '');
+  const reason = String(req.body.reason ?? '').trim();
 
-  if (!ALLOWED_STATUSES.includes(status)) {
+  if (!Object.hasOwn(STATUSES, status) || status === 'resolved') {
     return res.status(400).json({ error: 'Unknown status.' });
   }
   // A rejection the student cannot understand is the complaint this exists to
   // prevent, so the reason is required rather than optional.
-  if (status === 'rejected' && !String(reason || '').trim()) {
-    return res.status(400).json({ error: 'A rejection must include a reason for the student.' });
-  }
-  if (status === 'needs_revision' && !String(note || '').trim()) {
-    return res.status(400).json({ error: 'Say what the student needs to change.' });
+  if (status === 'rejected' && !reason) {
+    return res.status(400).json({
+      error: 'Please give a reason. The student is shown this, so it should explain the decision.',
+    });
   }
 
   try {
     const result = await inTransaction(async (client) => {
-      const { rows } = await client.query(
-        `UPDATE posts
-            SET status = $1,
-                rejection_reason = CASE WHEN $1 = 'rejected' THEN $2 ELSE rejection_reason END,
-                revision_note   = CASE WHEN $1 = 'needs_revision' THEN $3 ELSE revision_note END,
-                updated_at = now()
-          WHERE id = $4
-        RETURNING id, title, status, author_id`,
-        [status, reason || null, note || null, req.params.id]
+      const post = await lockPost(client, id);
+      if (!post) return { status: 404, error: MISSING_POST };
+      if (!STATUSES[post.status].next.includes(status)) {
+        return { status: 409, error: cannotMove(post, `moved to ${STATUSES[status].label}`) };
+      }
+
+      await client.query(
+        `UPDATE posts SET status = $1, rejection_reason = $2, updated_at = now() WHERE id = $3`,
+        [status, status === 'rejected' ? reason : post.rejection_reason, post.id]
       );
-      if (!rows[0]) return null;
-      const post = rows[0];
 
       const action =
-        { approved: 'post_approved', rejected: 'post_rejected', needs_revision: 'revision_requested' }[
-          status
-        ] || 'status_changed';
-
+        { approved: 'post_approved', rejected: 'post_rejected' }[status] ?? 'status_changed';
       await writeLog(client, req, action, {
         targetType: 'post',
         targetId: post.id,
-        details: `${post.title} to ${status}`,
+        details: `${post.title} to ${status}${status === 'rejected' ? ` - ${reason}` : ''}`,
       });
 
-      const notice =
-        {
-          approved: {
-            type: 'post_approved',
-            title: 'Your submission was approved',
-            body: `"${post.title}" is now visible on the board.`,
-          },
-          rejected: {
-            type: 'post_rejected',
-            title: 'Your submission was not approved',
-            body: reason,
-          },
-          needs_revision: {
-            type: 'revision_requested',
-            title: 'Your submission needs a change',
-            body: note,
-          },
-        }[status] || {
-          type: 'status_changed',
-          title: 'Your submission was updated',
-          body: `"${post.title}" is now marked ${status.replace('_', ' ')}.`,
-        };
-
-      await notifyAuthor(client, post.id, notice.type, {
-        title: notice.title,
-        body: notice.body,
-        link: '/student/dashboard',
-      });
-
-      return post;
+      const notice = {
+        approved: {
+          type: 'post_approved',
+          title: 'Your submission was approved',
+          body: `"${post.title}" is now visible on the board.`,
+        },
+        rejected: {
+          type: 'post_rejected',
+          title: 'Your submission was not approved',
+          body: reason,
+        },
+      }[status] ?? {
+        type: 'status_changed',
+        title: 'Your submission was updated',
+        body: `"${post.title}" is now marked ${STATUSES[status].label.toLowerCase()}.`,
+      };
+      await notifyAuthor(client, post, notice.type, notice);
+      return {};
     });
 
-    if (!result) return res.status(404).json({ error: 'Submission not found.' });
-    res.json(result);
-  } catch (err) {
-    next(err);
-  }
-});
-
-// Hand an approved concern to the department that will deal with it.
-router.patch('/posts/:id/assign', requirePermission('manage_concerns'), async (req, res, next) => {
-  const { department, assignedTo, priority } = req.body;
-  if (!department) return res.status(400).json({ error: 'Choose a department.' });
-
-  try {
-    const result = await inTransaction(async (client) => {
-      const { rows } = await client.query(
-        `UPDATE posts
-            SET department = $1,
-                assigned_to = $2,
-                assigned_at = now(),
-                priority = COALESCE($3, priority),
-                status = CASE WHEN status IN ('approved','pending','under_review')
-                              THEN 'assigned' ELSE status END,
-                updated_at = now()
-          WHERE id = $4
-        RETURNING id, title, department, assigned_to, status`,
-        [department, assignedTo || null, priority || null, req.params.id]
-      );
-      if (!rows[0]) return null;
-
-      await writeLog(client, req, 'concern_assigned', {
-        targetType: 'post',
-        targetId: rows[0].id,
-        details: `${rows[0].title} to ${department}`,
-      });
-      await notifyAuthor(client, rows[0].id, 'concern_assigned', {
-        title: 'Your concern has been assigned',
-        body: `"${rows[0].title}" was passed to the department handling it.`,
-        link: '/student/dashboard',
-      });
-
-      return rows[0];
-    });
-
-    if (!result) return res.status(404).json({ error: 'Submission not found.' });
-    res.json(result);
-  } catch (err) {
-    next(err);
-  }
-});
-
-router.patch('/posts/:id/resolve', requirePermission('manage_concerns'), async (req, res, next) => {
-  const { resolution } = req.body;
-  if (!String(resolution || '').trim()) {
-    return res.status(400).json({ error: 'Write a short summary of what was done.' });
-  }
-
-  try {
-    const result = await inTransaction(async (client) => {
-      const { rows } = await client.query(
-        `UPDATE posts
-            SET status = 'resolved', resolution = $1, resolved_at = now(), updated_at = now()
-          WHERE id = $2
-        RETURNING id, title, resolution`,
-        [resolution, req.params.id]
-      );
-      if (!rows[0]) return null;
-
-      await writeLog(client, req, 'concern_resolved', {
-        targetType: 'post',
-        targetId: rows[0].id,
-        details: rows[0].title,
-      });
-      await notifyAuthor(client, rows[0].id, 'concern_resolved', {
-        title: 'Your concern has been resolved',
-        body: resolution,
-        link: '/student/dashboard',
-      });
-
-      return rows[0];
-    });
-
-    if (!result) return res.status(404).json({ error: 'Submission not found.' });
-    res.json(result);
-  } catch (err) {
-    next(err);
-  }
-});
-
-// A staff-only note. Never returned to the student.
-router.post('/posts/:id/notes', requirePermission('moderate_posts'), async (req, res, next) => {
-  const { body } = req.body;
-  if (!String(body || '').trim()) return res.status(400).json({ error: 'The note is empty.' });
-
-  try {
-    const { rows } = await pool.query(
-      `INSERT INTO admin_notes (post_id, admin_id, body) VALUES ($1, $2, $3) RETURNING *`,
-      [req.params.id, req.user.id, body]
-    );
-    res.status(201).json(rows[0]);
-  } catch (err) {
-    next(err);
-  }
-});
-
-/* ------------------------------------------------------------------ *
- * NOTIFICATIONS AND THE AUDIT LOG
- * ------------------------------------------------------------------ */
-
-router.get('/notifications', requirePermission('view_admin'), async (req, res, next) => {
-  try {
-    const { rows } = await pool.query(
-      `SELECT * FROM notifications
-        WHERE audience = 'admin' OR user_id = $1
-        ORDER BY created_at DESC
-        LIMIT 200`,
-      [req.user.id]
-    );
-    res.json(rows);
-  } catch (err) {
-    next(err);
-  }
-});
-
-router.patch('/notifications/:id/read', requirePermission('view_admin'), async (req, res, next) => {
-  try {
-    await pool.query('UPDATE notifications SET is_read = TRUE WHERE id = $1', [req.params.id]);
+    if (result.error) return res.status(result.status).json({ error: result.error });
     res.status(204).end();
   } catch (err) {
     next(err);
@@ -564,24 +390,278 @@ router.patch('/notifications/:id/read', requirePermission('view_admin'), async (
 });
 
 /*
- * The audit log is readable and nothing else. There is no POST, PATCH or
- * DELETE here on purpose - entries are only ever written by the handlers
- * above, as part of the action they record.
+ * Hand an approved submission to the department that will deal with it.
+ * Assigning IS the work starting, so an approved post moves to in_progress;
+ * one already in progress is simply reassigned.
+ */
+router.patch('/posts/:id/assign', requirePermission('manage_concerns'), async (req, res, next) => {
+  const id = toId(req.params.id);
+  const department = String(req.body.department ?? '');
+  const assignedTo = String(req.body.assignedTo ?? '').trim();
+  if (!Object.hasOwn(DEPARTMENTS, department)) {
+    return res.status(400).json({ error: 'Choose a department.' });
+  }
+  if (assignedTo.length > 120) {
+    return res.status(400).json({ error: 'Responsible staff must be 120 characters or fewer.' });
+  }
+
+  try {
+    const result = await inTransaction(async (client) => {
+      const post = await lockPost(client, id);
+      if (!post) return { status: 404, error: MISSING_POST };
+      if (!KINDS[post.kind].needsAssignment) {
+        return { status: 409, error: 'This kind of submission is not assigned to a department.' };
+      }
+      if (!['approved', 'in_progress'].includes(post.status)) {
+        return { status: 409, error: cannotMove(post, 'assigned') };
+      }
+
+      await client.query(
+        `UPDATE posts
+            SET department = $1, assigned_to = $2, assigned_at = now(),
+                status = 'in_progress', updated_at = now()
+          WHERE id = $3`,
+        [department, assignedTo || null, post.id]
+      );
+
+      await writeLog(client, req, 'concern_assigned', {
+        targetType: 'post',
+        targetId: post.id,
+        details: `${post.title} to ${DEPARTMENTS[department]}${assignedTo ? ` (${assignedTo})` : ''}`,
+      });
+      await notifyAuthor(client, post, 'concern_assigned', {
+        title: 'Your concern has been assigned',
+        body: `"${post.title}" was passed to the department handling it.`,
+      });
+      return {};
+    });
+
+    if (result.error) return res.status(result.status).json({ error: result.error });
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.patch('/posts/:id/resolve', requirePermission('manage_concerns'), async (req, res, next) => {
+  const id = toId(req.params.id);
+  const resolution = String(req.body.resolution ?? '').trim();
+  if (!resolution) {
+    return res.status(400).json({ error: 'Please write a short summary of what was actually done.' });
+  }
+
+  try {
+    const result = await inTransaction(async (client) => {
+      const post = await lockPost(client, id);
+      if (!post) return { status: 404, error: MISSING_POST };
+      if (!['approved', 'in_progress', 'resolved'].includes(post.status)) {
+        return { status: 409, error: cannotMove(post, 'resolved') };
+      }
+
+      /*
+       * Correcting the summary of something already resolved keeps its
+       * original resolution date. Otherwise every edit to the wording would
+       * move the date forward and quietly inflate the resolution-time
+       * figures on the dashboard and the Departments page.
+       */
+      const alreadyResolved = post.status === 'resolved' && Boolean(post.resolved_at);
+
+      await client.query(
+        `UPDATE posts
+            SET status = 'resolved', resolution = $1,
+                resolved_at = CASE WHEN $2::boolean THEN resolved_at ELSE now() END,
+                updated_at = now()
+          WHERE id = $3`,
+        [resolution, alreadyResolved, post.id]
+      );
+
+      await writeLog(client, req, 'concern_resolved', {
+        targetType: 'post',
+        targetId: post.id,
+        details: alreadyResolved ? `${post.title} - summary updated` : post.title,
+      });
+      await notifyAuthor(client, post, 'concern_resolved', {
+        title: alreadyResolved
+          ? 'The resolution of your concern was updated'
+          : 'Your concern has been resolved',
+        body: resolution,
+      });
+      return {};
+    });
+
+    if (result.error) return res.status(result.status).json({ error: result.error });
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// A staff-only note. Never returned to the student.
+router.post('/posts/:id/notes', requirePermission('moderate_posts'), async (req, res, next) => {
+  const id = toId(req.params.id);
+  const text = String(req.body.text ?? '').trim();
+  if (!text) return res.status(400).json({ error: 'The note is empty.' });
+  if (text.length > 2000) {
+    return res.status(400).json({ error: 'Please keep a note to 2000 characters or fewer.' });
+  }
+
+  try {
+    const result = await inTransaction(async (client) => {
+      const post = await lockPost(client, id);
+      if (!post) return { status: 404, error: MISSING_POST };
+
+      await client.query(
+        'INSERT INTO admin_notes (post_id, admin_id, admin_name, body) VALUES ($1, $2, $3, $4)',
+        [post.id, req.user.id, req.user.name, text]
+      );
+      await client.query('UPDATE posts SET updated_at = now() WHERE id = $1', [post.id]);
+      await writeLog(client, req, 'admin_note_added', {
+        targetType: 'post',
+        targetId: post.id,
+        details: post.title,
+      });
+      return {};
+    });
+
+    if (result.error) return res.status(result.status).json({ error: result.error });
+    res.status(201).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ------------------------------------------------------------------ *
+ * PRIVACY REQUESTS
+ *
+ * Kept apart from moderation on purpose: its own permission
+ * (manage_privacy), its own log (models/privacyEvents.js). The requests and
+ * the privacy log reach the panel through GET /api/state, for holders of
+ * that permission only.
+ * ------------------------------------------------------------------ */
+
+const PRIVACY_STATUS_WORDS = {
+  in_progress: 'being handled',
+  completed: 'completed',
+  declined: 'declined',
+};
+
+/*
+ * Move a request on: start it, complete it, or decline it. Completing or
+ * declining needs a reply, because the person is shown it. Completing a
+ * deletion request deletes the account - which also needs delete_users -
+ * with `deletePosts` choosing whether the person's submissions go too.
+ *
+ * Nobody handles a request about their own account: another administrator
+ * must, so nobody is the only witness to what was done with their own data.
+ */
+router.patch('/privacy-requests/:id', requirePermission('manage_privacy'), async (req, res, next) => {
+  const id = toId(req.params.id);
+  const status = String(req.body.status ?? '');
+  const response = String(req.body.response ?? '').trim();
+  const deletePosts = req.body.deletePosts === true;
+
+  if (!Object.hasOwn(PRIVACY_STATUS_WORDS, status)) {
+    return res.status(400).json({ error: 'Unknown status.' });
+  }
+  if (status !== 'in_progress' && !response) {
+    return res.status(400).json({ error: 'Write a reply for the person - they are shown it.' });
+  }
+  if (response.length > 2000) {
+    return res.status(400).json({ error: 'Please keep the reply to 2000 characters or fewer.' });
+  }
+
+  try {
+    const result = await inTransaction(async (client) => {
+      const { rows } = await client.query('SELECT * FROM privacy_requests WHERE id = $1 FOR UPDATE', [id]);
+      const request = rows[0];
+      if (!request) return { status: 404, error: 'That request no longer exists.' };
+      if (request.user_id !== null && isSelf(req, request.user_id)) {
+        return { status: 400, error: 'Another administrator must handle a request about your own account.' };
+      }
+
+      const allowed = { pending: ['in_progress', 'completed', 'declined'], in_progress: ['completed', 'declined'] };
+      if (!(allowed[request.status] ?? []).includes(status)) {
+        return { status: 409, error: `This request is already ${request.status.replace('_', ' ')}.` };
+      }
+
+      const label = PRIVACY_REQUEST_TYPES[request.type];
+      let postsOutcome = null;
+      let accountDeleted = false;
+
+      if (request.type === 'deletion' && status === 'completed' && request.user_id !== null) {
+        if (!can(req.user, 'delete_users')) return { status: 404, error: 'Not found.' };
+        accountDeleted = Boolean(await deleteAccount(client, req, request.user_id, { deletePosts }));
+        postsOutcome = deletePosts ? 'deleted' : 'kept';
+      }
+
+      await client.query(
+        `UPDATE privacy_requests
+            SET status = $2, response = COALESCE($3, response), posts_outcome = COALESCE($4, posts_outcome),
+                handled_by_id = $5, handled_by_name = $6, updated_at = now(),
+                resolved_at = CASE WHEN $7::boolean THEN now() ELSE resolved_at END
+          WHERE id = $1`,
+        [
+          request.id,
+          status,
+          response || null,
+          postsOutcome,
+          req.user.id,
+          req.user.name,
+          status !== 'in_progress',
+        ]
+      );
+
+      await writePrivacyEvent(client, {
+        actor: req.user,
+        action: `request_${status}`,
+        requestId: request.id,
+        subjectName: request.requester_name,
+        details: [
+          `${label} request`,
+          accountDeleted && `account deleted, submissions ${postsOutcome}`,
+        ]
+          .filter(Boolean)
+          .join(' - '),
+      });
+
+      // Tell the person - unless their account was the thing deleted.
+      if (request.user_id !== null && !accountDeleted) {
+        await client.query(
+          `INSERT INTO notifications (type, audience, user_id, title, body)
+           VALUES ('privacy_request_updated', 'author', $1, $2, $3)`,
+          [
+            request.user_id,
+            `Your ${label} request is ${PRIVACY_STATUS_WORDS[status]}`,
+            response || `An administrator has started on your ${label} request.`,
+          ]
+        );
+      }
+      return {};
+    });
+
+    if (result.error) return res.status(result.status).json({ error: result.error });
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* ------------------------------------------------------------------ *
+ * THE AUDIT LOG
+ * ------------------------------------------------------------------ */
+
+/*
+ * The whole log, newest first, for the activity-log export. (The screens
+ * show the latest 500, which arrive with GET /api/state.)
+ *
+ * Readable and nothing else. There is no POST, PATCH or DELETE for it on
+ * purpose - entries are only ever written by the handlers above, as part of
+ * the action they record.
  */
 router.get('/activity-logs', requirePermission('view_audit_log'), async (req, res, next) => {
   try {
-    const { action, adminId, search } = req.query;
-    const { rows } = await pool.query(
-      `SELECT * FROM activity_logs
-        WHERE ($1::text IS NULL OR action = $1)
-          AND ($2::int  IS NULL OR admin_id = $2)
-          AND ($3::text IS NULL OR details ILIKE '%' || $3 || '%'
-                                OR admin_name ILIKE '%' || $3 || '%')
-        ORDER BY created_at DESC
-        LIMIT 500`,
-      [action || null, adminId || null, search || null]
-    );
-    res.json(rows);
+    const { rows } = await pool.query('SELECT * FROM activity_logs ORDER BY created_at DESC, id DESC');
+    res.json({ entries: rows.map(shapeLogEntry) });
   } catch (err) {
     next(err);
   }

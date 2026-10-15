@@ -9,6 +9,8 @@ import Button from '../../components/Button.jsx';
 import ConfirmDialog from '../../components/ConfirmDialog.jsx';
 import DataTable from '../../components/admin/DataTable.jsx';
 import SubmissionReview from '../../components/admin/SubmissionReview.jsx';
+import PrivacyData from '../../components/PrivacyData.jsx';
+import ChangePasswordForm from '../../components/ChangePasswordForm.jsx';
 import {
   AccountStatusBadge,
   Avatar,
@@ -17,6 +19,7 @@ import {
   EmptyState,
   Field,
   KindBadge,
+  Notice,
   PageHeader,
   Panel,
   RoleBadge,
@@ -48,15 +51,15 @@ import {
  * WHAT YOU'LL MEET IN THIS FILE (plain-English notes)
  *
  * - useParams()  Reads the variable part of the address. The route is
- *   /admin/users/:userId, so on /admin/users/user-juan this returns
- *   { userId: 'user-juan' }.
+ *   /admin/users/:userId, so on /admin/users/user-lx3k9f1 this returns
+ *   { userId: 'user-lx3k9f1' }.
  * - An early return for "not found"  If the account does not exist the
  *   function returns a small "gone" screen straight away, so nothing below
  *   has to keep checking whether `account` is null.
  * - `confirming` holding one of three strings  'suspend' | 'activate' |
- *   'delete' | null. One piece of state drives one ConfirmDialog with three
- *   sets of wording, picked by `{ suspend: {...}, ... }[confirming]` - an
- *   object used as a lookup table, indexed by the current value.
+ *   'delete' | null. One piece of state drives one ConfirmDialog
+ *   with three sets of wording, picked by `{ suspend: {...}, ... }[confirming]`
+ *   - an object used as a lookup table, indexed by the current value.
  * - `[isSelf]`  "Is this the signed-in admin's own account?" Several controls
  *   check it, because you must not be able to suspend, delete or demote
  *   yourself by accident.
@@ -68,7 +71,7 @@ import {
 function UserProfile() {
   const { userId } = useParams();
   const { user, can } = useAuth();
-  const store = useStore(user);
+  const store = useStore();
   const navigate = useNavigate();
 
   const account = findUser(store.db, userId);
@@ -78,6 +81,8 @@ function UserProfile() {
   const [confirming, setConfirming] = useState(null); // 'suspend' | 'activate' | 'delete'
   const [reviewingId, setReviewingId] = useState(null);
   const [error, setError] = useState('');
+  // True while a change is on its way to the server.
+  const [busy, setBusy] = useState(false);
 
   const activity = useMemo(
     () => (account ? userActivity(store.db, account.id) : null),
@@ -122,31 +127,41 @@ function UserProfile() {
     setError('');
   }
 
-  function saveEdits() {
-    const result = store.updateUser(account.id, draft);
-    if (result?.error) {
+  // Every change on this page goes through here: one request at a time, and
+  // the server's reason shown if it refuses. Answers what the server sent,
+  // or null if it was refused.
+  async function act(request) {
+    if (busy) return null;
+    setBusy(true);
+    const result = await request();
+    setBusy(false);
+
+    if (result.error) {
       setError(result.error);
-      return;
+      return null;
     }
-    setEditing(false);
     setError('');
+    return result;
   }
 
-  function handleConfirmed() {
+  async function saveEdits() {
+    if (await act(() => store.updateUser(account.id, draft))) setEditing(false);
+  }
+
+  async function handleConfirmed() {
     const actions = {
       suspend: () => store.setUserStatus(account.id, 'suspended'),
       activate: () => store.setUserStatus(account.id, 'active'),
       delete: () => store.deleteUser(account.id),
     };
 
-    const result = actions[confirming]?.();
+    // Kept: `confirming` is cleared below, before the answer arrives.
+    const confirmed = confirming;
     setConfirming(null);
 
-    if (result?.error) {
-      setError(result.error);
-      return;
-    }
-    if (confirming === 'delete') navigate('/admin/users');
+    const result = await act(actions[confirmed]);
+    if (!result) return;
+    if (confirmed === 'delete') navigate('/admin/users');
   }
 
   const confirmCopy = {
@@ -250,9 +265,9 @@ function UserProfile() {
       </PageHeader>
 
       {error && (
-        <p role="alert" className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+        <Notice className="mb-4">
           {error}
-        </p>
+        </Notice>
       )}
 
       {/* Editing your own account here would let you take away your own admin
@@ -260,6 +275,7 @@ function UserProfile() {
       {isSelf && (
         <p className="mb-4 rounded-lg bg-sky-50 px-3 py-2 text-sm text-sky-800">
           This is your own account. Suspending, deleting and role changes are disabled here.
+          Your password is changed below.
         </p>
       )}
 
@@ -290,19 +306,26 @@ function UserProfile() {
                 ))}
               </div>
 
+              {/* The server refuses new school details for somebody who has
+                  not agreed to them being kept (backend/src/models/accountRules.js). */}
+              <p className="text-xs text-slate-500">
+                School details can only be added or changed for a person who has allowed CampusVoiceBox
+                to keep them. Clearing them is always allowed.
+              </p>
+
               <div className="flex flex-wrap justify-end gap-2 pt-1">
                 <Button variant="ghost" size="sm" onClick={() => setEditing(false)}>
                   Cancel
                 </Button>
-                <Button variant="primary" size="sm" onClick={saveEdits}>
-                  Save changes
+                <Button variant="primary" size="sm" onClick={saveEdits} disabled={busy}>
+                  {busy ? 'Saving…' : 'Save changes'}
                 </Button>
               </div>
             </div>
           ) : (
             <div className="flex flex-col gap-4 sm:flex-row">
               <div className="flex flex-col items-center gap-2">
-                <Avatar name={account.name} size="lg" />
+                <Avatar name={account.name} photo={account.photo} size="lg" />
                 <AccountStatusBadge status={account.status} />
                 <RoleBadge role={account.role} />
               </div>
@@ -352,7 +375,11 @@ function UserProfile() {
               <Select
                 id="account-role"
                 value={account.role}
-                onChange={(event) => store.setUserRole(account.id, event.target.value)}
+                disabled={busy}
+                onChange={(event) => {
+                  const role = event.target.value;
+                  act(() => store.setUserRole(account.id, role));
+                }}
                 options={ROLE_LIST.map((item) => ({ value: item.key, label: item.label }))}
               />
             </Field>
@@ -395,6 +422,18 @@ function UserProfile() {
           pageSize={10}
         />
       </Panel>
+
+      {/* An administrator's own password, privacy choices and rights - the
+          same panels a student has on /account, which forwards admins here.
+          Nobody changes or resets another person's password: a forgotten
+          one is reset by its owner, with the emailed link from the log-in
+          page. A privacy request an admin makes is handled by another. */}
+      {isSelf && (
+        <div className="mt-4 space-y-4">
+          <ChangePasswordForm />
+          <PrivacyData />
+        </div>
+      )}
 
       {confirming && (
         <ConfirmDialog

@@ -2,10 +2,14 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { PERMISSIONS } from '../../data/roles.js';
-import { AWAITING_REVIEW, OPEN_STATUSES, kindInfo } from '../../data/workflow.js';
-import { useStore, notificationsFor } from '../../services/store.js';
+import { AWAITING_REVIEW, isOpenWork } from '../../data/workflow.js';
+import { OPEN_PRIVACY_STATUSES } from '../../data/policies.js';
+import { useStore, unreadCountFor } from '../../services/store.js';
 import Logo from '../Logo.jsx';
 import ConfirmDialog from '../ConfirmDialog.jsx';
+import PolicyLinks from '../PolicyLinks.jsx';
+import { UnreadBadge } from '../NotificationBell.jsx';
+import { BELL_PATH, DASHBOARD_PATH, LOGOUT_PATH } from '../icons.js';
 import { Avatar, Badge, RoleBadge } from './ui.jsx';
 
 /*
@@ -59,7 +63,7 @@ import { Avatar, Badge, RoleBadge } from './ui.jsx';
  * ------------------------------------------------------------------ */
 
 const ICONS = {
-  dashboard: 'M4 13h6V4H4v9Zm0 7h6v-5H4v5Zm10 0h6V11h-6v9Zm0-16v5h6V4h-6Z',
+  dashboard: DASHBOARD_PATH,
   monitor: 'M4 5h16v11H4zM9 20h6M12 16v4',
   users: 'M16 19a4 4 0 0 0-8 0M12 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM20 19a3 3 0 0 0-4-2.8',
   // A shield being stamped: the approval gate nothing reaches the board without.
@@ -68,9 +72,12 @@ const ICONS = {
   progress:
     'M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-7.9 7.9l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 7.9-7.9l-3.8 3.8Z',
   analytics: 'M4 20V10M10 20V4M16 20v-7M22 20H2',
-  bell: 'M18 16v-5a6 6 0 1 0-12 0v5l-2 3h16l-2-3ZM10 22h4',
+  // The same bell as the student navbar's - see icons.js.
+  bell: BELL_PATH,
   logs: 'M8 6h11M8 12h11M8 18h11M3.5 6h.01M3.5 12h.01M3.5 18h.01',
   departments: 'M3 21h18M5 21V7l7-4 7 4v14M9 21v-4h6v4M9 11h.01M15 11h.01',
+  // A plain shield: people's rights over their own information.
+  privacy: 'M12 3l7.5 3.5v5c0 4.5-3 8.2-7.5 9.5-4.5-1.3-7.5-5-7.5-9.5v-5L12 3Z',
   exports: 'M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2',
   settings:
     'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm7.4-3a7.4 7.4 0 0 0-.1-1.2l2-1.5-2-3.4-2.4 1a7.5 7.5 0 0 0-2-1.2L14.5 3h-4l-.4 2.7c-.7.3-1.4.7-2 1.2l-2.4-1-2 3.4 2 1.5a7.4 7.4 0 0 0 0 2.4l-2 1.5 2 3.4 2.4-1c.6.5 1.3.9 2 1.2l.4 2.7h4l.4-2.7c.7-.3 1.4-.7 2-1.2l2.4 1 2-3.4-2-1.5c.1-.4.1-.8.1-1.2Z',
@@ -179,11 +186,31 @@ function buildNav(counts) {
      * "Departments" sat here too and did not belong: it never reads a single
      * user record, only posts. It answers "where is the work and how long is
      * it taking", which is an Insights question, so that is where it now is.
+     *
+     * Privacy Requests are people asking about their own information - kept
+     * apart from the submission queues on purpose: a deletion request is
+     * not moderation, and is not handled by whoever approves posts unless
+     * they also hold MANAGE_PRIVACY. Its count is the open requests this
+     * admin may handle (not ones about their own account).
      */
     {
       title: 'People',
-      permission: PERMISSIONS.MANAGE_USERS,
-      items: [{ to: '/admin/users', label: 'Users', icon: ICONS.users, end: true }],
+      items: [
+        {
+          to: '/admin/users',
+          label: 'Users',
+          icon: ICONS.users,
+          end: true,
+          permission: PERMISSIONS.MANAGE_USERS,
+        },
+        {
+          to: '/admin/privacy',
+          label: 'Privacy Requests',
+          icon: ICONS.privacy,
+          badge: counts.privacy,
+          permission: PERMISSIONS.MANAGE_PRIVACY,
+        },
+      ],
     },
 
     {
@@ -287,7 +314,7 @@ function NavItem({ item, onNavigate }) {
 
 function AdminLayout() {
   const { user, can, logout } = useAuth();
-  const { db } = useStore(user);
+  const { db } = useStore();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -304,12 +331,13 @@ function AdminLayout() {
   const counts = useMemo(
     () => ({
       pending: db.posts.filter((post) => AWAITING_REVIEW.includes(post.status)).length,
-      // Everything a department has to act on - by `needsAssignment`, not by
-      // family, so a request counts here the same as a concern does.
-      openWork: db.posts.filter(
-        (post) => kindInfo(post.kind).needsAssignment && OPEN_STATUSES.includes(post.status)
+      // Everything a department has to act on - see isOpenWork in
+      // data/workflow.js.
+      openWork: db.posts.filter(isOpenWork).length,
+      privacy: db.privacyRequests.filter(
+        (request) => OPEN_PRIVACY_STATUSES.includes(request.status) && request.userId !== user?.id
       ).length,
-      unread: notificationsFor(db, user).filter((note) => !note.read).length,
+      unread: unreadCountFor(db, user),
     }),
     [db, user]
   );
@@ -327,8 +355,9 @@ function AdminLayout() {
     [counts, can]
   );
 
-  function handleLogout() {
-    logout();
+  async function handleLogout() {
+    setConfirmingLogout(false);
+    await logout();
     navigate('/');
   }
 
@@ -341,11 +370,8 @@ function AdminLayout() {
             back here anyway, so pointing at it would be a redirect for the
             sake of one. */}
         <Link to="/admin/dashboard" className="flex min-h-[44px] items-center">
-          <Logo tone="light" />
+          <Logo tone="light" subtitle="Admin Panel" />
         </Link>
-        <p className="mt-2 pl-11 text-xs font-semibold uppercase tracking-wide text-mustard">
-          Admin Panel
-        </p>
       </div>
 
       <nav className="min-h-0 flex-1 space-y-4 overflow-y-auto px-3 py-4">
@@ -377,7 +403,7 @@ function AdminLayout() {
           onClick={() => setConfirmingLogout(true)}
           className="flex min-h-[44px] w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-semibold text-red-300 transition-colors hover:bg-red-500/15 hover:text-red-200"
         >
-          <Icon path="M15 17l5-5-5-5M20 12H9M12 20H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h6" />
+          <Icon path={LOGOUT_PATH} />
           Log out
         </button>
       </div>
@@ -420,11 +446,16 @@ function AdminLayout() {
             </button>
 
             {/*
-              "View student site" used to sit here. With "/" now forwarding an
-              admin back to this panel, the link led nowhere - one click out,
-              one redirect straight back in. Removed rather than left as a
-              button that appears to do nothing.
+              THE WAY TO THE STUDENT SIDE. An administrator can use the board
+              like everybody else - read, post and vote. "Admin panel" in the
+              profile menu there brings them back.
             */}
+            <Link
+              to="/"
+              className="flex min-h-[44px] items-center rounded-lg px-3 text-sm font-semibold text-navy-700 transition-colors hover:bg-slate-100"
+            >
+              View site
+            </Link>
 
             <div className="ml-auto flex items-center gap-2">
               {/*
@@ -443,11 +474,7 @@ function AdminLayout() {
                 }`}
               >
                 <Icon path={ICONS.bell} className="h-5 w-5" />
-                {counts.unread > 0 && (
-                  <span className="absolute -right-0.5 -top-0.5 grid h-5 min-w-[1.25rem] place-items-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">
-                    {counts.unread > 9 ? '9+' : counts.unread}
-                  </span>
-                )}
+                <UnreadBadge count={counts.unread} className="absolute -right-0.5 -top-0.5" />
               </Link>
 
               {/*
@@ -465,7 +492,7 @@ function AdminLayout() {
                   location.pathname === `/admin/users/${user?.id}` ? 'bg-slate-100' : ''
                 }`}
               >
-                <Avatar name={user?.name} size="sm" />
+                <Avatar name={user?.name} photo={user?.photo} size="sm" />
                 <span className="hidden max-w-[12rem] truncate text-sm font-semibold text-navy-900 md:block">
                   {user?.name}
                 </span>
@@ -480,6 +507,12 @@ function AdminLayout() {
         <main className="px-4 py-6 sm:px-6 lg:px-8">
           <Outlet />
         </main>
+
+        {/* The policies and the cookie choice - on every admin page, as the
+            student site's footer has them on every page there. */}
+        <footer className="border-t border-slate-200 px-4 py-2 sm:px-6 lg:px-8">
+          <PolicyLinks />
+        </footer>
       </div>
 
       {confirmingLogout && (

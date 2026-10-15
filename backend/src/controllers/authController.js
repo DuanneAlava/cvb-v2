@@ -1,70 +1,114 @@
+const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
-
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-// At least 8 characters, with one letter and one number - same rule the
-// frontend's Signup.jsx already enforces, kept in sync here so the API
-// never accepts something the UI itself would have rejected.
-const PASSWORD_PATTERN = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/;
-
-function signToken(user) {
-  /*
-   * The role travels in the token so cheap checks can read it without a query.
-   * It is a HINT, not the authority: a token minted an hour ago still claims
-   * "admin" after the account was demoted or suspended, so every admin route
-   * re-reads the role from the database (middleware/auth.js requirePermission).
-   */
-  return jwt.sign({ sub: user.id, email: user.email, role: user.role }, process.env.JWT_SECRET, {
-    expiresIn: process.env.JWT_EXPIRES_IN || '7d',
-  });
-}
+const { sendMail } = require('../config/mail');
+const { can, signToken } = require('../middleware/auth');
+const { writeActivityLog } = require('../models/activityLog');
+const { inTransaction } = require('../models/transaction');
+const {
+  EMAIL_PATTERN,
+  PASSWORD_PATTERN,
+  PASSWORD_RULE_MESSAGE,
+  WRONG_EMAIL_OR_PASSWORD,
+  ADMIN_EDITABLE,
+  readAccountFields,
+  schoolDetailsRefused,
+} = require('../models/accountRules');
+const { POLICY_VERSIONS } = require('../models/policies');
 
 /*
- * What is safe to send back about an account.
+ * Signing up, signing in and out, and resetting a forgotten password.
+ * (Changing a password you know is done signed in, from your own account -
+ * controllers/accountController.js.)
  *
- * Built as an allow-list rather than by deleting password_hash from the row:
- * a column added to the table later is then excluded by default instead of
- * being leaked until somebody notices.
+ * The browser keeps the token these hand out and sends it with every request
+ * (frontend/src/services/api.js). Everything about the account itself - its
+ * name, its role, its posts - is then read from GET /api/state, so these only
+ * answer "did it work" and hand over the token (signToken, middleware/auth.js).
  */
-function publicUser(row) {
-  return {
-    id: row.id,
-    name: row.name,
-    email: row.email,
-    role: row.role,
-    status: row.status,
-    studentId: row.student_id ?? '',
-    course: row.course ?? '',
-    yearLevel: row.year_level ?? '',
-    section: row.section ?? '',
-    createdAt: row.created_at,
-    lastLoginAt: row.last_login_at,
-  };
+
+/*
+ * Compared against when no account has the email typed, so a wrong email
+ * takes as long to answer as a wrong password. Without it, the time taken
+ * would tell somebody which emails have accounts - the very thing the
+ * single error message is there to hide.
+ */
+const NO_ACCOUNT_HASH = bcrypt.hashSync('no account has this password', 10);
+
+// The account an email belongs to, and whether `password` is its password.
+async function checkPassword(email, password) {
+  const { rows } = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+  const account = rows[0];
+  const matches = await bcrypt.compare(String(password ?? ''), account?.password_hash ?? NO_ACCOUNT_HASH);
+  return account && matches ? account : null;
+}
+
+// Sign-ins and sign-outs are recorded for administrators only. The log is a
+// record of administrative action; a few hundred student sign-ins a week
+// would bury the decisions it exists to show.
+function logSession(account, action, req) {
+  if (!can(account, 'view_admin')) return null;
+  return writeActivityLog(pool, {
+    adminId: account.id,
+    adminName: account.name,
+    adminRole: account.role,
+    action,
+    targetType: 'user',
+    targetId: account.id,
+    details: account.email,
+    ip: req.ip,
+  });
 }
 
 // POST /api/auth/register
 async function register(req, res, next) {
   try {
-    const { name, email, password, studentId, course, yearLevel, section } = req.body;
-
-    if (!name || !name.trim()) {
+    // The same checks, in the same order and words, as the sign-up form
+    // (frontend/src/pages/Signup.jsx) - then the length limits of every field.
+    if (!String(req.body.name ?? '').trim()) {
       return res.status(400).json({ error: 'Please enter your full name.' });
     }
-    if (!EMAIL_PATTERN.test(String(email || '').trim())) {
+    if (!EMAIL_PATTERN.test(String(req.body.email ?? '').trim())) {
       return res.status(400).json({ error: 'Please enter a valid school email address.' });
     }
-    if (!PASSWORD_PATTERN.test(String(password || ''))) {
+    if (!PASSWORD_PATTERN.test(String(req.body.password ?? ''))) {
+      return res.status(400).json({ error: PASSWORD_RULE_MESSAGE });
+    }
+    const { values, error } = readAccountFields(req.body, ADMIN_EDITABLE);
+    if (error) return res.status(400).json({ error });
+
+    /*
+     * THE TERMS, AND WHAT WAS READ. Accepting the Terms is required, and is
+     * checked here as well as on the form - a request sent without the form
+     * would skip the form's check. The versions sent back are the ones the
+     * form showed; they must be the current ones, so nobody accepts text
+     * they did not see (models/policies.js).
+     */
+    if (req.body.acceptTerms !== true) {
       return res
         .status(400)
-        .json({ error: 'Use at least 8 characters, with one letter and one number.' });
+        .json({ error: 'Please accept the Terms & Conditions to create your account.' });
+    }
+    if (
+      req.body.termsVersion !== POLICY_VERSIONS.terms ||
+      req.body.privacyVersion !== POLICY_VERSIONS.privacy
+    ) {
+      return res.status(409).json({
+        error:
+          'The Terms or the Privacy Policy changed while this page was open. Reload the page, read them again, then sign up.',
+      });
     }
 
-    const existing = await pool.query('SELECT id FROM users WHERE email = $1', [
-      email.trim().toLowerCase(),
-    ]);
-    if (existing.rows.length > 0) {
-      return res.status(409).json({ error: 'An account with that school email already exists.' });
+    /*
+     * SCHOOL DETAILS ONLY WITH CONSENT - a separate, optional choice, never
+     * bundled with the Terms. Somebody who fills them in must also agree to
+     * them being kept; somebody who does not agree simply leaves them blank.
+     */
+    const schoolConsent = req.body.schoolConsent === true;
+    if (schoolDetailsRefused(values, { hasConsent: schoolConsent })) {
+      return res.status(400).json({
+        error: 'Tick the box to let CampusVoiceBox keep your school details, or leave them blank.',
+      });
     }
 
     /*
@@ -74,39 +118,85 @@ async function register(req, res, next) {
      * deliberately, so guessing millions of passwords is impractical. The
      * plain password is never stored anywhere.
      */
-    const passwordHash = await bcrypt.hash(password, 10);
-    const result = await pool.query(
+    const passwordHash = await bcrypt.hash(req.body.password, 10);
+
+    const user = await inTransaction(async (client) => {
       /*
-       * The role column is deliberately absent from this INSERT, so it takes
-       * its 'student' default. Registration must never be able to choose a
-       * role - if it could, every permission check in the system would be
-       * decorative, because anyone could sign up as an admin.
+       * One sign-up at a time, so two sign-ups at the same moment cannot
+       * both claim the same email. The default administrator is created
+       * under the same lock (config/defaultAdmin.js). The lock is released
+       * when the transaction ends.
        */
-      `INSERT INTO users (name, email, password_hash, student_id, course, year_level, section)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       RETURNING id, name, email, role, status, student_id, course, year_level, section, created_at`,
-      [
-        name.trim(),
-        email.trim().toLowerCase(),
-        passwordHash,
-        studentId || null,
-        course || null,
-        yearLevel || null,
-        section || null,
-      ]
-    );
+      await client.query('SELECT pg_advisory_xact_lock(470700)');
 
-    const user = result.rows[0];
+      const taken = await client.query('SELECT 1 FROM users WHERE email = $1', [values.email]);
+      if (taken.rows.length > 0) return null;
 
-    // Tell the admin panel somebody registered.
-    await pool.query(
-      `INSERT INTO notifications (type, audience, title, body, link)
-       VALUES ('user_registered', 'admin', 'New user registered', $1, $2)`,
-      [`${user.name} (${user.email}) created an account.`, `/admin/users/${user.id}`]
-    );
+      /*
+       * SIGNING UP IS FOR STUDENTS AND USERS ONLY. A student number makes a
+       * student account; without one it is a general user account. It never
+       * makes an administrator: the administrator is the default account
+       * (config/defaultAdmin.js), and only an administrator can promote
+       * anybody. Registration never lets the person choose - the role is
+       * decided here and nowhere else.
+       */
+      const role = values.student_id ? 'student' : 'user';
 
-    const token = signToken(user);
-    res.status(201).json({ user: publicUser(user), token });
+      // Signing up signs the person in, so it counts as their first login.
+      const { rows } = await client.query(
+        `INSERT INTO users (name, email, password_hash, role, student_id, course, year_level,
+                            section, school_consent_version, school_consent_at, last_login_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, CASE WHEN $10::boolean THEN now() END, now())
+         RETURNING *`,
+        [
+          values.name,
+          values.email,
+          passwordHash,
+          role,
+          values.student_id ?? null,
+          values.course ?? null,
+          values.year_level ?? null,
+          values.section ?? null,
+          schoolConsent ? POLICY_VERSIONS.privacy : null,
+          schoolConsent,
+        ]
+      );
+      const created = rows[0];
+
+      // What was agreed to, and when - the evidence, in the same transaction
+      // as the account, so there is never an account without it.
+      const agreed = [
+        ['terms', POLICY_VERSIONS.terms, 'accepted'],
+        ['privacy_notice', POLICY_VERSIONS.privacy, 'acknowledged'],
+        ...(schoolConsent ? [['school_details', POLICY_VERSIONS.privacy, 'granted']] : []),
+      ];
+      for (const [document, version, action] of agreed) {
+        await client.query(
+          'INSERT INTO policy_acceptances (user_id, document, version, action) VALUES ($1, $2, $3, $4)',
+          [created.id, document, version, action]
+        );
+      }
+
+      // Tell the admin panel somebody registered.
+      await client.query(
+        `INSERT INTO notifications (type, audience, title, body, link)
+         VALUES ('user_registered', 'admin', 'New user registered', $1, $2)`,
+        [`${created.name} (${created.email}) created an account.`, `/admin/users/${created.id}`]
+      );
+
+      return created;
+    });
+
+    // `field` tells the form which box the message belongs beside - a 409
+    // can also mean the policies changed while the form was open (above).
+    if (!user) {
+      return res
+        .status(409)
+        .json({ error: 'An account with that school email already exists.', field: 'email' });
+    }
+
+    await logSession(user, 'login', req);
+    res.status(201).json({ token: signToken(user) });
   } catch (err) {
     next(err);
   }
@@ -115,29 +205,20 @@ async function register(req, res, next) {
 // POST /api/auth/login
 async function login(req, res, next) {
   try {
-    const { email, password } = req.body;
-
-    if (!email || !password) {
+    const email = String(req.body.email ?? '').trim().toLowerCase();
+    if (!email || !req.body.password) {
       return res.status(400).json({ error: 'Please fill in both fields.' });
     }
 
-    const result = await pool.query('SELECT * FROM users WHERE email = $1', [
-      String(email).trim().toLowerCase(),
-    ]);
-    const user = result.rows[0];
-
-    // Deliberately vague message so we never reveal which accounts exist.
-    const genericError = 'That email and password do not match an account.';
-    if (!user) return res.status(401).json({ error: genericError });
-
-    const passwordMatches = await bcrypt.compare(password, user.password_hash);
-    if (!passwordMatches) return res.status(401).json({ error: genericError });
+    // Deliberately vague, so the form never reveals which accounts exist.
+    const user = await checkPassword(email, req.body.password);
+    if (!user) return res.status(401).json({ error: WRONG_EMAIL_OR_PASSWORD });
 
     /*
-     * A suspended account is refused here as well as at every admin route.
-     * Checking it once at the door is not enough on its own - an account can
-     * be suspended after signing in - but refusing the sign-in stops a new
-     * token being minted for it in the first place.
+     * A suspended account is refused here as well as on every request it
+     * makes. Checking it at the door is not enough on its own - an account
+     * can be suspended after signing in - but refusing the sign-in stops a
+     * new token being minted for it in the first place.
      */
     if (user.status === 'suspended') {
       return res.status(403).json({
@@ -146,36 +227,156 @@ async function login(req, res, next) {
     }
 
     await pool.query('UPDATE users SET last_login_at = now() WHERE id = $1', [user.id]);
+    await logSession(user, 'login', req);
 
-    // Sign-ins go in the audit log too, so "who was in the panel and when" has
-    // an answer.
-    await pool.query(
-      `INSERT INTO activity_logs (admin_id, admin_name, admin_role, action, target_type, target_id, details, ip_address)
-       VALUES ($1, $2, $3, 'login', 'user', $4, $5, $6)`,
-      [user.id, user.name, user.role, String(user.id), user.email, req.ip]
-    );
-
-    const token = signToken(user);
-    res.json({ user: publicUser(user), token });
+    res.json({ token: signToken(user) });
   } catch (err) {
     next(err);
   }
 }
 
-// GET /api/auth/me  (requires a valid Bearer token)
-async function me(req, res, next) {
+// POST /api/auth/logout  (signed in) - only recorded; the browser forgets the token.
+async function logout(req, res, next) {
   try {
-    const result = await pool.query(
-      `SELECT id, name, email, role, status, student_id, course, year_level, section,
-              created_at, last_login_at
-         FROM users WHERE id = $1`,
-      [req.user.id]
-    );
-    if (result.rows.length === 0) return res.status(404).json({ error: 'User not found.' });
-    res.json({ user: result.rows[0] });
+    await logSession(req.user, 'logout', req);
+    res.status(204).end();
   } catch (err) {
     next(err);
   }
 }
 
-module.exports = { register, login, me };
+/*
+ * FORGOTTEN PASSWORDS - an emailed link, used once, within an hour.
+ *
+ * POST /api/auth/forgot-password { email } answers the same whatever the
+ * email: "if it has an account, a link is on its way". Saying which emails
+ * have accounts would hand anybody a list of the school's students. The
+ * email itself is sent after the answer has gone, so the time taken does
+ * not give it away either. A suspended account is sent nothing - it could
+ * not log in afterwards anyway.
+ *
+ * The link carries a long random secret. Only its SHA-256 hash is stored
+ * (the password_resets table), so the table alone cannot be used to reset
+ * anybody's password. The secret is in the link's "#" part, which browsers
+ * never send to a server - it stays out of every web server's access log.
+ *
+ * POST /api/auth/reset-password { token, newPassword } sets the new
+ * password, signs the account out on every device (password_changed_at,
+ * see middleware/auth.js), and removes every reset link the account has.
+ */
+const RESET_LINK_MINUTES = 60;
+const RESET_SENT =
+  'If that email belongs to an account, a link to reset its password is on its way. It works for one hour.';
+const RESET_LINK_INVALID =
+  'This reset link no longer works - it was already used, it has expired, or a newer one was sent. Ask for a new link.';
+
+// The website's own address, which the emailed link points to.
+const APP_URL = (process.env.APP_URL || 'http://localhost:3000').replace(/\/+$/, '');
+
+const hashResetToken = (token) => crypto.createHash('sha256').update(token).digest('hex');
+
+function resetEmail(account, token) {
+  return {
+    to: account.email,
+    subject: 'Reset your CampusVoiceBox password',
+    text: [
+      `Hello ${account.name},`,
+      '',
+      `Somebody asked to reset the password of your CampusVoiceBox account (${account.email}).`,
+      `To choose a new password, open this link within the next ${RESET_LINK_MINUTES} minutes:`,
+      '',
+      `${APP_URL}/reset-password#token=${token}`,
+      '',
+      'The link works once. If you did not ask for this, ignore this email - your password stays as it is.',
+      '',
+      'CampusVoiceBox',
+    ].join('\n'),
+  };
+}
+
+// POST /api/auth/forgot-password
+async function forgotPassword(req, res, next) {
+  try {
+    const email = String(req.body.email ?? '').trim().toLowerCase();
+    if (!EMAIL_PATTERN.test(email)) {
+      return res.status(400).json({ error: 'Please enter a valid email address.' });
+    }
+
+    const { rows } = await pool.query("SELECT id, name, email FROM users WHERE email = $1 AND status = 'active'", [
+      email,
+    ]);
+    const account = rows[0];
+
+    if (account) {
+      const token = crypto.randomBytes(32).toString('base64url');
+      await inTransaction(async (client) => {
+        // A new link replaces any earlier one; expired links are cleared out too.
+        await client.query('DELETE FROM password_resets WHERE user_id = $1 OR expires_at < now()', [account.id]);
+        await client.query(
+          `INSERT INTO password_resets (user_id, token_hash, expires_at)
+           VALUES ($1, $2, now() + make_interval(mins => $3))`,
+          [account.id, hashResetToken(token), RESET_LINK_MINUTES]
+        );
+      });
+      // After the answer, not before it - see the note above.
+      setImmediate(() => {
+        sendMail(resetEmail(account, token)).catch((err) =>
+          console.error(`Could not send the password reset email to ${account.email}:`, err.message)
+        );
+      });
+    }
+
+    res.json({ message: RESET_SENT });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// POST /api/auth/reset-password
+async function resetPassword(req, res, next) {
+  try {
+    const token = String(req.body.token ?? '');
+    const newPassword = String(req.body.newPassword ?? '');
+    if (!token) return res.status(400).json({ error: RESET_LINK_INVALID });
+    if (!PASSWORD_PATTERN.test(newPassword)) {
+      return res.status(400).json({ error: PASSWORD_RULE_MESSAGE });
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 10);
+    const done = await inTransaction(async (client) => {
+      const { rows } = await client.query(
+        `SELECT u.id, u.name, u.role
+           FROM password_resets r JOIN users u ON u.id = r.user_id
+          WHERE r.token_hash = $1 AND r.expires_at > now()
+          FOR UPDATE OF r`,
+        [hashResetToken(token)]
+      );
+      const account = rows[0];
+      if (!account) return false;
+
+      await client.query('UPDATE users SET password_hash = $1, password_changed_at = now() WHERE id = $2', [
+        passwordHash,
+        account.id,
+      ]);
+      await client.query('DELETE FROM password_resets WHERE user_id = $1', [account.id]);
+      await writeActivityLog(client, {
+        adminId: account.id,
+        adminName: account.name,
+        adminRole: account.role,
+        action: 'password_changed',
+        targetType: 'user',
+        targetId: account.id,
+        details: `${account.name} - with an emailed reset link`,
+        ip: req.ip,
+      });
+      return true;
+    });
+
+    if (!done) return res.status(400).json({ error: RESET_LINK_INVALID });
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { register, login, logout, forgotPassword, resetPassword };

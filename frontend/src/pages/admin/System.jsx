@@ -1,5 +1,3 @@
-import { useState } from 'react';
-import { useAuth } from '../../context/AuthContext.jsx';
 import { CATEGORIES } from '../../data/categories.js';
 import { PERMISSIONS, ROLE_LIST } from '../../data/roles.js';
 import {
@@ -8,9 +6,6 @@ import {
   NOTIFICATION_TYPES,
   STATUS_LIST,
 } from '../../data/workflow.js';
-import { SCHEMA_VERSION } from '../../services/store.js';
-import Button from '../../components/Button.jsx';
-import ConfirmDialog from '../../components/ConfirmDialog.jsx';
 import {
   Badge,
   CategoryBadge,
@@ -26,7 +21,7 @@ import {
  *
  * This page was called "Settings", which promised something it does not
  * offer: there is nothing here to set. It is a read-only description of the
- * platform's vocabulary plus one reset button, so it is named for what it is.
+ * platform's vocabulary, so it is named for what it is.
  *
  * Everything the panel adapts itself to is listed here, showing an
  * administrator exactly what the system currently recognises - and showing a
@@ -54,9 +49,6 @@ import {
  * - `permission.replace(/_/g, ' ')`  Turn 'moderate_posts' into 'moderate
  *   posts' for display. The `g` flag means "every underscore, not just the
  *   first".
- * - localStorage.removeItem(key)  Delete one saved key. The reset removes
- *   every key the store uses, then `window.location.href = '/'` reloads the
- *   page from the top so the store re-seeds itself.
  */
 
 /*
@@ -76,21 +68,6 @@ function ConfigList({ description, source, children }) {
 }
 
 function System() {
-  const { can } = useAuth();
-  const [confirmingReset, setConfirmingReset] = useState(false);
-
-  /*
-   * Clearing the stored platform and letting it re-seed. Useful before a
-   * demonstration, and the honest way to recover if the saved data is ever
-   * left in a strange state during development.
-   */
-  function resetPlatform() {
-    ['cvb_schema_version', 'cvb_users', 'cvb_posts', 'cvb_votes', 'cvb_notifications', 'cvb_audit', 'cvb_session'].forEach(
-      (key) => localStorage.removeItem(key)
-    );
-    window.location.href = '/';
-  }
-
   return (
     <>
       <PageHeader
@@ -184,15 +161,14 @@ function System() {
           <table className="w-full min-w-[40rem] border-collapse text-sm">
             <thead>
               <tr className="border-b border-slate-200 text-left">
-                <th className="px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Role
-                </th>
-                <th className="px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Lands on
-                </th>
-                <th className="px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Permissions
-                </th>
+                {['Role', 'Lands on', 'Permissions'].map((heading) => (
+                  <th
+                    key={heading}
+                    className="px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500"
+                  >
+                    {heading}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -224,57 +200,24 @@ function System() {
         <p className="mt-3 font-mono text-xs text-slate-400">Defined in src/data/roles.js</p>
       </Panel>
 
-      {/* THE HONEST NOTE. An admin panel that implies it is secured when it is
-          not would be worse than one that says plainly where it stands. */}
+      {/* WHERE THE RECORDS LIVE, and what actually protects them. */}
       <Panel className="mt-4" title="Data and security">
         <div className="space-y-3 text-sm text-slate-600">
           <p>
-            <strong className="text-navy-900">Storage:</strong> the student site and this panel read
-            and write the same records through <code className="font-mono text-xs">src/services/store.js</code>.
-            Schema version {SCHEMA_VERSION}.
+            <strong className="text-navy-900">Storage:</strong> every account, submission, vote,
+            notification and log entry is kept on the server, in its database (
+            <code className="font-mono text-xs">backend/</code>). The student site and this panel
+            read the same records through{' '}
+            <code className="font-mono text-xs">src/services/store.js</code>, and every change is
+            sent to the server.
           </p>
-
-          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
-            <p className="font-semibold text-amber-900">
-              This build keeps its data in the browser, which cannot enforce permissions.
-            </p>
-            <p className="mt-1 text-amber-900">
-              The role checks and route guards decide what this interface offers. They cannot stop
-              somebody who edits their own stored account in devtools. Before this is used for real,
-              the store has to be pointed at the API in{' '}
-              <code className="font-mono text-xs">backend/</code>, where the role is checked again on
-              every request and the browser gets no say.
-            </p>
-          </div>
+          <p>
+            <strong className="text-navy-900">Permissions:</strong> the server checks the signed-in
+            account's role again on every request. The menus and route guards in this panel only
+            decide what is shown - hiding a button is never what stops an action.
+          </p>
         </div>
       </Panel>
-
-      {/* Reset, kept last and behind a confirmation. */}
-      {can(PERMISSIONS.MANAGE_SETTINGS) && (
-        <Panel className="mt-4" title="Reset demonstration data">
-          <p className="text-sm text-slate-600">
-            Clears every account, submission, vote, notification and log entry on this browser, then
-            re-seeds the starter data. Useful before a presentation.
-          </p>
-          <div className="mt-3">
-            <Button variant="ghost" onClick={() => setConfirmingReset(true)} className="!text-red-600">
-              Reset platform data
-            </Button>
-          </div>
-        </Panel>
-      )}
-
-      {confirmingReset && (
-        <ConfirmDialog
-          title="Reset all platform data?"
-          message={`Every account except the seeded demo ones, and every submission, vote, notification and log entry on this browser will be erased. You will be signed out. This cannot be undone.`}
-          confirmLabel="Erase and re-seed"
-          cancelLabel="Cancel"
-          onConfirm={resetPlatform}
-          onCancel={() => setConfirmingReset(false)}
-        />
-      )}
-
     </>
   );
 }

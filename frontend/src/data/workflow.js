@@ -67,7 +67,7 @@
  * status that still exists in this object.
  * ------------------------------------------------------------------ */
 
-export const STATUSES = {
+const STATUSES = {
   pending: {
     key: 'pending',
     label: 'Pending',
@@ -166,7 +166,7 @@ export function statusInfo(key) {
  * Add a kind here and it appears in the right places automatically.
  * ------------------------------------------------------------------ */
 
-export const KINDS = {
+const KINDS = {
   suggestion: {
     key: 'suggestion',
     label: 'Suggestion',
@@ -225,6 +225,17 @@ export function kindsInGroup(group) {
 export const ASSIGNABLE_KINDS = KIND_LIST.filter((kind) => kind.needsAssignment).map(
   (kind) => kind.key
 );
+
+/*
+ * IS THIS POST OPEN WORK? Approved, not finished, and of a kind a department
+ * has to act on - by `needsAssignment`, not by family, so a request counts
+ * the same as a concern. The one rule behind the admin sidebar's Open Work
+ * badge, the dashboard's Open Work list and the "open work" statistic, so the
+ * three can never disagree.
+ */
+export function isOpenWork(post) {
+  return kindInfo(post.kind).needsAssignment && OPEN_STATUSES.includes(post.status);
+}
 
 /* ------------------------------------------------------------------ *
  * DEPARTMENTS - who a concern is handed to.
@@ -285,6 +296,7 @@ export const NOTIFICATION_TYPES = {
   concern_resolved: { key: 'concern_resolved', audience: 'author', tone: 'good', label: 'Concern resolved' },
   account_suspended: { key: 'account_suspended', audience: 'author', tone: 'bad', label: 'Account suspended' },
   account_activated: { key: 'account_activated', audience: 'author', tone: 'good', label: 'Account activated' },
+  privacy_request_updated: { key: 'privacy_request_updated', audience: 'author', tone: 'info', label: 'Privacy request' },
 };
 
 export function notificationInfo(key) {
@@ -296,7 +308,6 @@ export function notificationInfo(key) {
 export const TONE_CLASS = {
   good: 'bg-emerald-100 text-emerald-700',
   bad: 'bg-red-100 text-red-700',
-  warn: 'bg-amber-100 text-amber-800',
   info: 'bg-sky-100 text-sky-800',
 };
 
@@ -304,8 +315,11 @@ export const TONE_CLASS = {
  * AUDIT LOG
  *
  * The administrative actions worth recording. Everything an admin does that
- * changes somebody else's data goes through store.js, which writes one of
- * these, so the log cannot be forgotten at the call site.
+ * changes somebody else's data is done by the server, which writes one of
+ * these as part of the same change, so the log cannot be forgotten at the
+ * call site. The server writes them in backend/src/routes/adminRoutes.js
+ * and backend/src/controllers/ (authController.js, accountController.js) -
+ * a new action there needs its label here.
  * ------------------------------------------------------------------ */
 
 export const AUDIT_ACTIONS = {
@@ -320,8 +334,13 @@ export const AUDIT_ACTIONS = {
   user_suspended: 'Suspended account',
   user_activated: 'Activated account',
   user_updated: 'Updated account',
+  password_changed: 'Changed password',
+  // Kept for older entries: until 2026-10-14 an administrator reset a
+  // forgotten password. A forgotten one is now reset by its owner, by email.
+  password_reset: 'Reset a password',
   user_deleted: 'Deleted account',
   role_changed: 'Changed account role',
+  first_admin: 'Became the first administrator',
 };
 
 export function auditLabel(action) {

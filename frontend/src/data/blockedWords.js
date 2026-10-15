@@ -5,6 +5,9 @@
  * prohibited: a post containing anything from these lists is rejected before
  * it is ever saved (see services/moderation.js for the matching rules).
  *
+ * The server keeps an identical copy (backend/src/models/blockedWords.js) and
+ * checks every post with it too - add or remove a word in both.
+ *
  * The lists cover English and Filipino - Tagalog, Bisaya and Ilocano - because
  * all of them turn up in the way students actually write on Facebook.
  *
@@ -41,7 +44,7 @@
  * ------------------------------------------------------------------ */
 
 // Swearing and slurs.
-export const PROFANITY_EN = [
+const PROFANITY_EN = [
   // the f-word and its spellings
   'fuck', 'fucks', 'fucked', 'fucking', 'fuckin', 'fuckn', 'fucker', 'fuckers',
   'fuk', 'fuq', 'fck', 'fcking', 'fvck', 'phuck', 'fk', 'fking',
@@ -77,7 +80,7 @@ export const PROFANITY_EN = [
 
 // Name-calling. Not swearing, but rude at a person, which the board also
 // refuses: a suggestion should describe a problem, not attack somebody.
-export const INSULTS_EN = [
+const INSULTS_EN = [
   'stupid', 'idiot', 'idiots', 'idiotic', 'moron', 'morons', 'moronic',
   'imbecile', 'dumb', 'dumbo', 'dimwit', 'halfwit', 'nitwit',
   'loser', 'losers', 'ugly', 'pathetic', 'useless', 'worthless',
@@ -92,7 +95,7 @@ export const INSULTS_EN = [
  * handled by the checker, so only one spelling of each needs listing.
  * ------------------------------------------------------------------ */
 
-export const PROFANITY_FIL = [
+const PROFANITY_FIL = [
   // the putangina family, easily the most common of the lot
   'putangina', 'putanginamo', 'putanginang', 'putangnamo', 'putang',
   'puta', 'putaka', 'pota', 'potaena', 'putaena', 'putres', 'putragis',
@@ -124,7 +127,7 @@ export const PROFANITY_FIL = [
   'ukinnam', 'ukinnana', 'ukinam',
 ];
 
-export const INSULTS_FIL = [
+const INSULTS_FIL = [
   'tanga', 'tangang', 'tnga', 'bobo', 'boba', 'bobong', 'bobita',
   'ulol', 'ulul', 'ulolka', 'engot', 'hangal', 'gunggong', 'ungas',
   'shunga', 'abnoy', 'abnormal', 'siraulo', 'baliw', 'buang', 'buwang',

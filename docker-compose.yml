@@ -1,9 +1,16 @@
-# Brings up the whole 30%-progress stack with one command:
+# Brings up the whole stack with one command:
 #   docker compose up --build
 #
-# - db:       Postgres 16, with the schema + seed data loaded automatically
-#             the first time the volume is created (see db/init/)
-# - backend:  Express API on http://localhost:4000
+# - db:       Postgres 16, with backend/src/models/schema.sql (the tables and
+#             the six categories) loaded automatically the first time the
+#             volume is created. (schema.sql only runs on an EMPTY volume:
+#             after a schema change, `docker compose down -v` wipes the old
+#             database first.)
+# - backend:  Express API on http://localhost:4000. On its first start it
+#             creates the default administrator from ADMIN_EMAIL and
+#             ADMIN_PASSWORD - set them in your shell or in a .env file beside
+#             this one before `docker compose up` (see GUIDE.md). Signing up
+#             on the website only makes student and user accounts.
 # - frontend: React dev server on http://localhost:3000
 #
 # This is a LOCAL/DEV setup (hot reload, no build optimisation). It is not
@@ -22,7 +29,6 @@ services:
     volumes:
       - cvb_pg_data:/var/lib/postgresql/data
       - ./backend/src/models/schema.sql:/docker-entrypoint-initdb.d/1-schema.sql:ro
-      - ./backend/src/models/seed.sql:/docker-entrypoint-initdb.d/2-seed.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U cvb_user -d campusvoicebox"]
       interval: 5s
@@ -34,6 +40,22 @@ services:
     restart: unless-stopped
     env_file:
       - ./backend/.env.docker
+    # The default administrator (backend/src/config/defaultAdmin.js) and the
+    # mail server for "Forgot password?" emails (backend/src/config/mail.js).
+    # Not in .env.docker, which is committed: each installation sets its own,
+    # in the shell or a .env file beside this one. Without SMTP_HOST, reset
+    # emails are printed in the backend's console instead of sent.
+    environment:
+      - ADMIN_NAME=${ADMIN_NAME:-}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-}
+      - SMTP_SECURE=${SMTP_SECURE:-}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASS=${SMTP_PASS:-}
+      - MAIL_FROM=${MAIL_FROM:-}
+      - APP_URL=${APP_URL:-http://localhost:3000}
     depends_on:
       db:
         condition: service_healthy

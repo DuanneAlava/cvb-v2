@@ -10,10 +10,15 @@ import {
  * The rudeness filter.
  *
  * Swearing and name-calling are prohibited on the board, so every post is
- * checked here before it is saved. The post form calls checkText() and refuses
- * to submit when anything is found, and the board runs the same check again
- * when it loads, so nothing rude can survive even if it was saved by an older
- * version of the app.
+ * checked here before it is sent. The post form calls checkFields() and
+ * refuses to submit when anything is found, and the records are checked again
+ * as they arrive from the server (services/store.js), so a word added to the
+ * list later still keeps older posts using it off the screen.
+ *
+ * THE SERVER HAS ITS OWN COPY - backend/src/models/moderation.js and
+ * blockedWords.js - and checks every post again when it arrives, because a
+ * request sent without this form skips this check. Keep the two copies
+ * identical: change a rule or a word here, make the same change there.
  *
  * The hard part of a word filter is not catching "putangina" - it is catching
  * "p0t4ng1naMoh" while still letting "assignment", "sheet", "leche flan" and
@@ -197,7 +202,7 @@ function joinSpacedOutLetters(words) {
  * the same check running on the server, has something to record. What the
  * student sees is rejectionMessage() below, which names nothing.
  */
-export function checkText(text) {
+function checkText(text) {
   if (!text) return { clean: true, matches: [] };
 
   const normalised = normalise(text);

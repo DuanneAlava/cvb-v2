@@ -11,6 +11,7 @@ import {
 } from '../../data/workflow.js';
 import { collegeForProgram } from '../../data/programs.js';
 import { useStore, findUser } from '../../services/store.js';
+import AttachmentList from '../AttachmentList.jsx';
 import Button from '../Button.jsx';
 import Modal from './Modal.jsx';
 import {
@@ -19,6 +20,7 @@ import {
   DetailList,
   Field,
   KindBadge,
+  Notice,
   Select,
   StatusBadge,
   TextArea,
@@ -73,8 +75,10 @@ import {
  * next to it. Which moves are offered still comes from `next` in
  * data/workflow.js, so the dialog cannot offer a move the workflow forbids.
  *
- * Everything here writes through services/store.js, which records the audit
- * entry and sends the student their notification as part of the same write.
+ * Everything here goes through services/store.js to the server, which checks
+ * the move is allowed, records the audit entry and sends the student their
+ * notification as part of the same write. While a request is on its way the
+ * buttons are switched off, so a double-click cannot send it twice.
  *
  * WHAT YOU'LL MEET IN THIS FILE (plain-English notes)
  *
@@ -305,8 +309,8 @@ function stageCaption(post, kind) {
 }
 
 function SubmissionReview({ post, onClose }) {
-  const { user, can } = useAuth();
-  const store = useStore(user);
+  const { can } = useAuth();
+  const store = useStore();
 
   const author = findUser(store.db, post.authorId);
 
@@ -337,6 +341,9 @@ function SubmissionReview({ post, onClose }) {
   const [noteText, setNoteText] = useState('');
   const [error, setError] = useState('');
   const [noteError, setNoteError] = useState('');
+
+  // True while a change is on its way to the server.
+  const [busy, setBusy] = useState(false);
 
   // What the last button did, in one sentence, shown under the progress line
   // in place of the stage caption until the next action.
@@ -372,27 +379,30 @@ function SubmissionReview({ post, onClose }) {
 
   /*
    * Every action funnels through here so one failure path covers them all.
+   * Answers true when the server accepted the change.
    *
    * On success the dialog STAYS OPEN: `post` is re-read by the page from the
    * store, so the progress line and the next-step section redraw themselves
    * for the new status, and `done` says what just happened. The side forms
    * are folded away because whatever they were for is no longer the next
-   * step.
+   * step. On a refusal the server's reason is shown, and the dialog shows
+   * the submission as it now stands.
    */
-  function run(action, done) {
-    try {
-      const result = action();
-      if (result?.error) {
-        setError(result.error);
-        return;
-      }
-      setError('');
-      setJustDid(done);
-      setReassigning(false);
-      setResolvingUnassigned(false);
-    } catch (failure) {
-      setError(failure.message);
+  async function run(action, done) {
+    if (busy) return false;
+    setBusy(true);
+    const result = await action();
+    setBusy(false);
+
+    if (result.error) {
+      setError(result.error);
+      return false;
     }
+    setError('');
+    setJustDid(done);
+    setReassigning(false);
+    setResolvingUnassigned(false);
+    return true;
   }
 
   // The moves that carry no data: approve, and every backward step.
@@ -407,18 +417,19 @@ function SubmissionReview({ post, onClose }) {
     moveTo('approved', done);
   }
 
-  function handleReject() {
+  async function handleReject() {
     if (!reason.trim()) {
       // A rejection with no reason is the thing students complain about most,
       // so the form insists on one.
       setError('Please give a reason. The student is shown this, so it should explain the decision.');
       return;
     }
-    run(
+    const rejected = await run(
       () => store.changeStatus(post.id, 'rejected', { reason: reason.trim() }),
       'Rejected. The student has been told why.'
     );
-    setReason('');
+    // Kept if the rejection did not go through, so it need not be retyped.
+    if (rejected) setReason('');
   }
 
   function handleAssign() {
@@ -441,15 +452,18 @@ function SubmissionReview({ post, onClose }) {
     );
   }
 
-  function handleAddNote() {
-    if (!noteText.trim()) return;
-    try {
-      store.addAdminNote(post.id, noteText.trim());
-      setNoteText('');
-      setNoteError('');
-    } catch (failure) {
-      setNoteError(failure.message);
+  async function handleAddNote() {
+    if (!noteText.trim() || busy) return;
+    setBusy(true);
+    const result = await store.addAdminNote(post.id, noteText.trim());
+    setBusy(false);
+
+    if (result.error) {
+      setNoteError(result.error);
+      return;
     }
+    setNoteText('');
+    setNoteError('');
   }
 
   /* ---------------------------------------------------------------- *
@@ -587,6 +601,18 @@ function SubmissionReview({ post, onClose }) {
       </Section>
     );
   } else if (post.status === 'approved' && mayManageConcerns) {
+    // Taking an approval back - offered on both paths below, so built once.
+    // `false` (nothing to draw) when this admin may not, or the status forbids it.
+    const sendBack = mayModerate && allows('under_review') && (
+      <SideAction
+        label="Send back to review"
+        hint="Approved by mistake? This takes it off the student board."
+        onClick={() =>
+          moveTo('under_review', 'Sent back to review. It is off the student board again.')
+        }
+      />
+    );
+
     nextStep = kind.needsAssignment ? (
       <Section title="Next step: assign it" tone="admin">
         <p className="mb-3 text-sm text-slate-600">
@@ -609,15 +635,7 @@ function SubmissionReview({ post, onClose }) {
             </div>
           )}
 
-          {mayModerate && allows('under_review') && (
-            <SideAction
-              label="Send back to review"
-              hint="Approved by mistake? This takes it off the student board."
-              onClick={() =>
-                moveTo('under_review', 'Sent back to review. It is off the student board again.')
-              }
-            />
-          )}
+          {sendBack}
         </div>
       </Section>
     ) : (
@@ -629,17 +647,7 @@ function SubmissionReview({ post, onClose }) {
 
         {resolveForm('Mark resolved')}
 
-        {mayModerate && allows('under_review') && (
-          <div className={sidePaths}>
-            <SideAction
-              label="Send back to review"
-              hint="Approved by mistake? This takes it off the student board."
-              onClick={() =>
-                moveTo('under_review', 'Sent back to review. It is off the student board again.')
-              }
-            />
-          </div>
-        )}
+        {sendBack && <div className={sidePaths}>{sendBack}</div>}
       </Section>
     );
   } else if (post.status === 'in_progress' && mayManageConcerns) {
@@ -790,9 +798,9 @@ function SubmissionReview({ post, onClose }) {
           <Section title="Progress">
             <StatusSteps post={post} path={path} />
             {justDid ? (
-              <p role="status" className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+              <Notice tone="success" className="mt-3">
                 {justDid}
-              </p>
+              </Notice>
             ) : (
               <p className="mt-3 text-sm text-slate-600">{stageCaption(post, kind)}</p>
             )}
@@ -805,25 +813,8 @@ function SubmissionReview({ post, onClose }) {
             {post.message}
           </p>
 
-          {post.attachments?.length > 0 && (
-            <ul className="mt-3 flex flex-wrap gap-2">
-              {post.attachments.map((file, index) => (
-                <li key={index}>
-                  {file.type?.startsWith('image/') ? (
-                    <img
-                      src={file.dataUrl}
-                      alt={file.name}
-                      className="h-24 w-24 rounded-lg border border-slate-200 object-cover"
-                    />
-                  ) : (
-                    <span className="flex h-24 w-24 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 p-2 text-center text-[10px] text-slate-500">
-                      {file.name}
-                    </span>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
+          {/* Each opens in a new tab - see components/AttachmentList.jsx. */}
+          <AttachmentList files={post.attachments} size="md" className="mt-3" />
         </Section>
 
         {/*
@@ -844,7 +835,7 @@ function SubmissionReview({ post, onClose }) {
 
             {author ? (
               <div className="flex items-start gap-3">
-                <Avatar name={author.name} />
+                <Avatar name={author.name} photo={author.photo} />
                 <div className="min-w-0 flex-1">
                   <Link
                     to={`/admin/users/${author.id}`}
@@ -886,9 +877,9 @@ function SubmissionReview({ post, onClose }) {
         {/* Any failure from the section above lands directly under it, where
             the button that caused it is still in view. */}
         {error && (
-          <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+          <Notice>
             {error}
-          </p>
+          </Notice>
         )}
 
         {/* A rejection that was later reconsidered leaves its reason on the
@@ -933,9 +924,9 @@ function SubmissionReview({ post, onClose }) {
             </div>
 
             {noteError && (
-              <p role="alert" className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+              <Notice className="mt-3">
                 {noteError}
-              </p>
+              </Notice>
             )}
           </Section>
         )}

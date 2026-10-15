@@ -6,8 +6,8 @@ way** — and it names the technical terms as they come up, so you can use the
 right word for each thing when you explain it to somebody else.
 
 It covers the files that make up the platform's workflow: the shared data
-layer, the login system, the student board, the admin panel, and the backend
-API that mirrors them. Files that are pure styling or one-off widgets
+layer, the login system, the student board, the admin panel, the backend
+API behind all of them, and the privacy and consent features. Files that are pure styling or one-off widgets
 (`Button.jsx`, `Logo.jsx`, `Footer.jsx`, …) are not walked through here.
 
 **How to read it.** Part 1 is the map. Part 2 is the glossary — skim it once,
@@ -29,8 +29,8 @@ CampusVoiceBox is one website with two faces:
                                    ▼
                     ┌──────────────────────────────┐
                     │  services/store.js            │   ◀── the single data layer
-                    │  users · posts · votes ·      │
-                    │  notifications · audit log    │
+                    │  one copy of what the server  │ ◀──▶  backend/ (Express +
+                    │  lets this person see         │       PostgreSQL)
                     └──────────────┬───────────────┘
                                    │  reads & writes
                                    ▼
@@ -41,14 +41,15 @@ CampusVoiceBox is one website with two faces:
 
 Both faces read and write **the same records** through one file,
 `services/store.js`. That is the most important design decision in the
-project: a student posting and an admin approving are two writes to one list,
-so nothing has to be "synced" — there is only one copy.
+project: a student posting and an admin approving are two writes to the same
+rows in one database, so nothing has to be "synced" — there is only one copy.
 
-Right now that one copy lives in the browser's **localStorage** (a small store
-the browser keeps for the site). That is fine for building and demonstrating
-the platform and not fine for real use, because anybody can edit their own
-browser. A real backend exists in `backend/` for when that day comes; the
-store is deliberately the only file that would have to change.
+That copy lives on the **server**, in PostgreSQL (`backend/`). The store fetches
+everything the signed-in person is allowed to see in one request, keeps it, and
+sends every change back to the server — which checks the change is allowed
+before saving it. What a browser shows can be edited by whoever is using it;
+what the server checks cannot, and that is where every rule that matters is
+enforced.
 
 ### The life of a submission
 
@@ -67,17 +68,17 @@ student posts ──▶ pending ──▶ approved ──▶ in_progress ──�
 - **resolved** — done; the student was told what was done.
 - **rejected** — not published; the student was told why.
 
-Every one of those moves is one function in `store.js`, and each of them
-writes an **audit log** entry and a **notification** to the student as part of
-the same save, so neither can be forgotten.
+Every one of those moves is one request to the server, which writes an
+**audit log** entry and a **notification** to the student in the same database
+transaction as the change, so neither can be forgotten.
 
 ### Who is who
 
 | Role | Lands on | May |
 |---|---|---|
 | `admin` | `/admin/dashboard` | everything — moderate, assign, resolve, manage users, change roles, export, reset |
-| `student` | `/student/dashboard` | post and vote |
-| `user` (staff / visitor without a student number) | `/student/dashboard` | post and vote |
+| `student` | `/` (the board) | post and vote |
+| `user` (staff / visitor without a student number) | `/` (the board) | post and vote |
 
 There is one login for everybody. The **role** on the account decides where
 they land and what they can do.
@@ -96,7 +97,7 @@ file-by-file tour points back here.
 - **arrow function** — `(a, b) => a + b`. A short way to write a function.
   If the body is one expression, it is returned automatically.
 - **callback** — a function you hand to another function to be called later
-  (`onClick={() => …}`, or the `mutate` given to `commit()`).
+  (`onClick={() => …}`, or the request handed to `change()` in `store.js`).
 - **closure** — a function that "remembers" the variables around where it was
   written, even when called much later from somewhere else.
 - **destructuring** — pulling named pieces out of an object or list:
@@ -172,10 +173,13 @@ file-by-file tour points back here.
   - **`useRef()`** — a box whose `.current` survives renders without causing
     one; attached to an element with `ref=`, it holds the real DOM node.
   - **`useContext(Ctx)`** — read a value provided higher up the tree.
+  - **`useSyncExternalStore(subscribe, getSnapshot)`** — read a value kept
+    *outside* React (here, the store's copy of the records) and re-draw
+    whenever it changes.
 - **context** — a way to hand a value (here: the signed-in user) to every
   component below a `<Provider>` without passing it through each one.
 - **custom hook** — your own `use…` function built from the built-in hooks
-  (`useAuth`, `useStore`, `useIsPhone`).
+  (`useAuth`, `useStore`, `useApiFile`, `useFittingPlaceholder`).
 - **controlled input** — an input whose `value` is state and whose `onChange`
   sets that state, so React owns what the box shows.
 - **`key`** — a unique, stable id on each item in a rendered list, so React
@@ -235,11 +239,16 @@ file-by-file tour points back here.
 
 ### Browser
 
+- **`fetch(url, options)`** — send a request to a server and wait for the
+  answer. Every request the site makes goes through `services/api.js`.
 - **localStorage** — a per-site key/value store of strings that survives
-  reloads. `getItem`, `setItem`, `removeItem`.
-- **BroadcastChannel** — send a message to the other open tabs of this site.
-- **`window.matchMedia(query)`** — ask whether a CSS media query currently
-  matches, and be told when that changes.
+  reloads. `getItem`, `setItem`, `removeItem`. Here it holds one thing: the
+  sign-in token.
+- **Blob / object URL** — a file's contents held in the browser, and a
+  `blob:` address an `<img>` or a link can use to show it.
+- **`ResizeObserver`** — be told whenever an element changes size, without
+  checking over and over. The search box uses it to pick a placeholder that
+  fits.
 - **`document.addEventListener(type, fn)`** — listen for clicks/keys on the
   whole page.
 - **`event.preventDefault()`** — stop the browser's default action (a form
@@ -256,8 +265,10 @@ file-by-file tour points back here.
 - **`req` / `res`** — the incoming request and the outgoing response.
   `req.params` (path parts), `req.query` (query string), `req.body` (JSON
   body). `res.status(404).json({…})` replies.
-- **HTTP status codes** — 200 OK, 201 created, 204 done/no body, 400 bad
-  input, 401 not signed in, 403 forbidden, 404 not found.
+- **HTTP status codes** — 200 OK, 201 created, 204 done/no body, 304 not
+  modified (use the copy you have), 400 bad input, 401 not signed in, 403
+  forbidden, 404 not found, 409 it changed since you looked, 413 too large,
+  429 too many attempts.
 - **JWT / token** — a signed string proving who you are, sent with each
   request.
 - **bcrypt** — one-way password hashing.
@@ -290,7 +301,7 @@ the same words and colours, and so a new status appears everywhere by itself.
 Key lines:
 
 ```js
-export const STATUSES = {
+const STATUSES = {
   pending: {
     key: 'pending',
     label: 'Pending',
@@ -331,7 +342,7 @@ Look up a status by key, falling back to `pending` if the key is unknown —
 so a bad value degrades to "needs looking at" rather than crashing.
 
 ```js
-export const KINDS = {
+const KINDS = {
   suggestion: { …, group: 'suggestion', needsAssignment: false },
   request:    { …, group: 'suggestion', needsAssignment: true },
   concern:    { …, group: 'concern',    needsAssignment: true },
@@ -378,9 +389,9 @@ export const PERMISSIONS = {
 Each permission is a string. UPPER_CASE names are a convention for constants.
 
 ```js
-export const ROLES = {
+const ROLES = {
   admin: { key: 'admin', label: 'Admin', permissions: ALL_PERMISSIONS, home: '/admin/dashboard', … },
-  student: { …, permissions: [PERMISSIONS.SUBMIT_POSTS, PERMISSIONS.VOTE], home: '/student/dashboard' },
+  student: { …, permissions: [PERMISSIONS.SUBMIT_POSTS, PERMISSIONS.VOTE], home: '/' },
   user: { … same as student … },
 };
 ```
@@ -411,237 +422,203 @@ one, so a field added here appears in both forms and the read-only view.
 ```js
 export const ACCOUNT_FIELDS = [
   { key: 'name', label: 'Full name', type: 'text', required: true },
-  { key: 'email', label: 'Email', type: 'email', adminOnly: true },
+  { key: 'email', label: 'Email', type: 'email', adminOnly: true, required: true },
   …
 ];
 export const STUDENT_EDITABLE_FIELDS = ACCOUNT_FIELDS.filter((field) => !field.adminOnly);
 ```
 "Configuration as data": describe the fields once, draw them with `.map`.
 `adminOnly` marks the email — a student may see it but not change it.
-
-#### `data/suggestions.js`
-
-**What it is:** six sample posts written on the very first visit so the
-board is not empty.
-
-`store.js` turns these into full records — adding an author, a kind and a
-status — which is why those fields are not here.
+`required` marks a field that may not be left empty. The server checks every
+save against its own copy of this list (`backend/src/models/accountRules.js`),
+from either form, along with the email rule (`EMAIL_PATTERN`, also here and
+also used by sign-up) and "no other account uses this email".
 
 ---
 
-### B. The data layer — `frontend/src/services/store.js`
+### B. The data layer — `frontend/src/services/store.js` and `services/api.js`
 
-**What it is:** the one file that reads and writes the platform's records.
+**What they are:** `api.js` sends every request to the server; `store.js`
+keeps one copy of the records the server sends, and holds every action that
+changes anything.
 
-**What it's for:** both the student board and the admin panel go through it,
-which is what makes them one system. It also means "move this to a server"
-is a change to this file alone.
+**What they're for:** both the student board and the admin panel go through
+`store.js`, which is what makes them one system — and no screen ever calls the
+server itself.
 
-**Structure:** helpers → seed data → read/write → selectors → the `useStore`
-hook (subscriptions, `commit`, and every action).
+**Structure of `store.js`:** helpers → the copy of the records and how it is
+kept up to date → selectors → the actions → the hooks.
 
-Key lines:
+Key lines, starting in `api.js`:
 
 ```js
-const SCHEMA_VERSION = 12;
+export const API_URL =
+  process.env.REACT_APP_API_URL ||
+  (process.env.NODE_ENV === 'production' ? '/api' : 'http://localhost:4000/api');
 ```
-Bumping this wipes the stored data and re-seeds it. It is bumped whenever the
-*shape* of a record changes (a field added or removed, a status retired), so
-old data cannot half-load into new code. The comment above it is a changelog
-of every bump and why.
+Where the server is. `REACT_APP_…` variables are baked in when the site is
+built. Left unset, a production build uses `/api` on its own address — the
+usual arrangement behind one web server — and development uses the backend's
+own port.
 
 ```js
-const KEYS = { version: 'cvb_schema_version', users: 'cvb_users', posts: 'cvb_posts', … };
-```
-The localStorage keys. Prefixed `cvb_` so they cannot collide with anything
-else on the same domain.
-
-```js
-function readKey(key, fallback) {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : fallback;
-  } catch {
-    return fallback;
-  }
+async function request(path, options) {
+  const response = await send(path, options);
+  const data = response.status === 204 ? null : await response.json().catch(() => ({}));
+  if (!response.ok) throw new ApiError(data?.error || …, response.status, data ?? {});
+  return data;
 }
 ```
-localStorage holds strings, so `JSON.parse` turns the text back into an
-object. The `try/catch` is because storage can be disabled (private browsing
-on some phones) or hold something unparseable; either way the app gets a
-usable fallback rather than crashing.
+Every request ends here. `send()` adds the `Authorization: Bearer <token>`
+header when somebody is signed in. A refusal becomes an `ApiError` carrying the
+server's own words (`data.error`), its status code, and anything else it said —
+a refused sign-up also says which `field` it is about.
 
 ```js
-export function readDb() {
-  …
-  if (Number(localStorage.getItem(KEYS.version)) !== SCHEMA_VERSION) {
-    const fresh = seedDatabase();
-    writeDb(fresh);
-    …
+export function fileUrl(path) { … URL.createObjectURL(await response.blob()) … }
 ```
-On every read, check the stored version. If it does not match, start over
-with the seed. This is what makes the version bump work.
+A stored photo or PDF, fetched *with the token* and turned into a `blob:`
+address. An `<img src="/api/attachments/12">` could not send the token, and a
+pending post's photo is for its author and staff only. Each file is fetched
+once and kept.
+
+Now `store.js`:
 
 ```js
-function writeDb(db) {
-  localStorage.setItem(KEYS.users, JSON.stringify(db.users));
-  …
-  getChannel()?.postMessage('changed'); // other tabs
-  notifyLocal();                        // and everything watching in this one
-}
+let db = EMPTY;
+let connection = 'loading';
+const listeners = new Set();
 ```
-Save every list, then tell everybody: other tabs via BroadcastChannel, and
-the other components on this page via a local listener list. This is why an
-approval in the admin tab appears on the student tab without a reload.
+The copy of the records lives here, outside React, as one plain object —
+`{ viewerId, users, posts, notifications, audit, auditTotal, privacy, … }` —
+exactly what `GET /api/state` answers. `connection` is `'loading'` until the
+first answer, then `'ready'` (or `'unreachable'` if the very first request
+failed).
 
 ```js
-export function findUser(db, userId) {
-  return db.users.find((user) => user.id === userId) ?? null;
+async function refresh() {
+  const ticket = ++requested;
+  …
+  answer = await api.state();
+  …
+  if (ticket <= applied) return true;
+  applied = ticket;
+  …
+  publish({ ...answer, posts: answer.posts.filter((post) => checkFields(post.title, post.message).clean) });
+```
+Fetch the copy again. Three details:
+
+- **A token the server no longer accepts** (expired, password changed, account
+  deleted) answers `401`; the token is forgotten and the copy fetched again as a
+  visitor — the person is simply signed out.
+- **The tickets.** Requests can overtake each other; an answer older than the
+  last one used is thrown away, so the screen never steps back.
+- **The rudeness filter runs again on the way in,** so a word added to the list
+  later still keeps older posts off the screen.
+
+```js
+const POLL_MS = 15000;
+…
+setInterval(refreshQuietly, POLL_MS);
+window.addEventListener('focus', refreshQuietly);
+document.addEventListener('visibilitychange', refreshQuietly);
+```
+Keeping up: every 15 seconds while the tab is in view, and at once when it
+comes back into view. A tab nobody is looking at asks nothing. The server
+answers an unchanged copy with `304 Not Modified`, so a quiet poll costs next
+to nothing.
+
+```js
+export function findUser(data, userId) {
+  return data.users.find((user) => user.id === userId) ?? null;
 }
 ```
 A **selector**: a plain function that answers a question about the data. The
 screens call these rather than digging through `db` themselves.
 
 ```js
-export function needsAssigning(db) {
-  return db.posts.filter(
-    (post) =>
-      OPEN_STATUSES.includes(post.status) &&
-      !post.department &&
-      kindInfo(post.kind).needsAssignment
-  );
+export function authorLabel(post, viewer) {
+  if (!post.anonymous) return post.authorName ?? 'Deleted account';
+  if (can(viewer, PERMISSIONS.VIEW_IDENTITY)) return `Anonymous · ${post.authorName ?? 'Deleted account'}`;
+  return 'Anonymous student';
 }
 ```
-"Approved but handed to nobody." The dashboard card and the Departments page
-both count from here, so they can never disagree.
+The name printed on a card. For a student the server never sent the name
+behind an anonymous post at all, so `post.authorName` is `null` there — the
+check here only decides how an administrator's view reads.
 
 ```js
-export function platformStats(db) {
+export function platformStats(data) {
   …
   return {
-    totalUsers: db.users.length,
+    totalUsers: data.users.length,
     pendingPosts: byStatus(AWAITING_REVIEW),
-    openWork: db.posts.filter((post) => kindInfo(post.kind).needsAssignment && OPEN_STATUSES.includes(post.status)).length,
-    unassignedPosts: needsAssigning(db).length,
+    openWork: data.posts.filter(isOpenWork).length,
+    unassignedPosts: needsAssigning(data).length,
+    totalVotes: data.posts.reduce((sum, post) => sum + post.votes, 0),
     …
 ```
-Every number a card could want, counted in one pass. The little helpers
-(`byStatus`, `byGroup`) are closures defined inside the function so the
-counting reads as English.
+Every number a card could want, counted in one pass from the copy. The little
+helpers (`byStatus`, `byGroup`) are closures defined inside the function so the
+counting reads as English. `isOpenWork` (`data/workflow.js`) is the one rule for
+"open work", shared by this count, the sidebar badge and the dashboard list.
 
 ```js
-export function useStore(actor = null) {
-  const [db, setDb] = useState(readDb);
-```
-**The hook.** `useState(readDb)` — passing the function, not calling it — is a
-lazy initialiser: storage is read once, on first render. `actor` is who is
-performing actions, for the audit log; `= null` is the default when a screen
-does not say.
-
-```js
-  useEffect(() => {
-    function refresh() { setDb(readDb()); }
-    const liveChannel = getChannel();
-    if (liveChannel) liveChannel.addEventListener('message', refresh);
-    localListeners.add(refresh);
-    window.addEventListener('storage', handleStorage);
-    return () => { …remove all three… };
-  }, []);
-```
-Subscribe to changes from every source, and — in the returned cleanup — un-
-subscribe when the component goes away. The empty `[]` means "set up once".
-
-```js
-  const commit = useCallback((mutate) => {
-    const next = readDb();     // re-read first, so a change from another tab is not lost
-    const result = mutate(next);
-    try { writeDb(next); } catch { throw new Error('There is no room left to save this…'); }
-    setDb(next);
-    return result;
-  }, []);
-```
-**Every write goes through here.** `mutate` is a callback that changes the
-working copy in place. Doing the read → change → save → re-draw routine in
-one place means no action can forget a step. `useCallback` keeps `commit` the
-same function object across renders, which the `useMemo` below depends on.
-
-```js
-  function log(next, action, { targetType = '', targetId = '', details = '' } = {}, as = actor) {
-    if (!as) return;
-    next.audit.unshift({ id: newId('log'), adminId: as.id, adminName: as.name, action, … createdAt: nowIso() });
-    next.audit = next.audit.slice(0, 500);
+async function change(request) {
+  try {
+    const answer = await request();
+    await refresh();
+    return answer ?? {};
+  } catch (problem) {
+    await refresh();
+    return { error: problem.message };
   }
-```
-Write an audit entry. `unshift` puts it at the front (newest first);
-`slice(0, 500)` caps the log. Called by the actions themselves, never by
-screens, so it cannot be skipped. The `{ … } = {}` in the parameter list is a
-destructured options object with a default of "no options".
-
-```js
-  const actions = useMemo(() => {
-    function createPost({ kind, category, title, message, anonymous, attachments, authorId }) {
-      return commit((next) => {
-        const post = { id: newId('post'), kind, category, title, message, authorId,
-                       anonymous: Boolean(anonymous), status: 'pending', department: '', … };
-        next.posts.unshift(post);
-        return { post };
-      });
-    }
-```
-An **action**. Everything starts life `pending`; nothing reaches the board
-without moderation. There is no notification to admins here on purpose — the
-Pending Approval queue *is* the notification.
-
-```js
-    function changeStatus(postId, status, { reason = '' } = {}) {
-      return commit((next) => {
-        const post = next.posts.find((candidate) => candidate.id === postId);
-        if (!post) return { error: 'That submission no longer exists.' };
-        post.status = status;
-        if (status === 'rejected') post.rejectionReason = reason;
-        log(next, auditAction, { … });
-        notify(next, notice.type, { userId: post.authorId, … });
-        return { post };
-      });
-    }
-```
-One function behind Approve, Reject and every other status move, so the audit
-entry and the student's notification are always written together with the
-change. Returning `{ error }` rather than throwing is the convention for
-"expected" failures the screen should show.
-
-```js
-    function assignConcern(postId, { department, assignedTo }) {
-      …
-        if (['approved', 'pending', 'under_review'].includes(post.status)) {
-          post.status = 'in_progress';
-        }
-```
-Assigning *is* the work starting — there used to be a separate `assigned`
-status between the two, and nothing ever sat in it.
-
-```js
-    function resolveConcern(postId, resolution) {
-      …
-        const alreadyResolved = post.status === 'resolved' && Boolean(post.resolvedAt);
-        post.status = 'resolved';
-        post.resolution = resolution;
-        if (!alreadyResolved) post.resolvedAt = nowIso();
-```
-Editing the summary of something already resolved keeps its original date —
-otherwise every wording fix would move the date forward and inflate the
-resolution-time figures.
-
-```js
-    return { register, authenticate, updateUser, …, recordLogin, recordLogout };
-  }, [commit, actor?.id, actor?.name, actor?.role]);
-
-  return { db, ...actions };
 }
 ```
-The actions are cached with `useMemo` and rebuilt only when the actor
-changes. `{ db, ...actions }` spreads them next to the data, so a screen can
-write `store.db.posts` and `store.approve(…)` from the same object.
+**Every change goes through here.** `request` sends it; once the server has
+accepted it, the copy is fetched again, so the new status, the audit entry and
+the student's notification are all on screen by the time the button's handler
+carries on. A refusal comes back as `{ error }` — the server's explanation —
+which the screen shows. Returning rather than throwing is the convention for
+"expected" failures.
+
+```js
+const actions = {
+  createPost: (fields) => change(() => api.createPost(fields)),
+  changeStatus: (postId, status, { reason = '' } = {}) =>
+    change(() => api.admin.setPostStatus(postId, status, reason)),
+  assignConcern: (postId, { department, assignedTo }) =>
+    change(() => api.admin.assign(postId, department, assignedTo)),
+  …
+```
+The actions — the complete list of things the website can change. Each is one
+request. The rules (who may, which moves are legal, what the student is told)
+are the server's; see `routes/adminRoutes.js` in section F.
+
+```js
+function toggleVote(postId) {
+  applied = requested;
+  lastAnswer = '';
+  publish({ ...db, posts: db.posts.map((post) => post.id === postId
+    ? { ...post, hasVoted: !post.hasVoted, votes: post.votes + (post.hasVoted ? -1 : 1) }
+    : post) });
+  return change(() => api.toggleVote(postId));
+}
+```
+The one action that shows its result *before* the server answers, because a
+vote button that waits feels broken. The server's answer then confirms it — or
+puts it back if it was refused.
+
+```js
+export function useStore() {
+  const data = useSyncExternalStore(subscribe, getDb);
+  return useMemo(() => ({ db: data, ...actions }), [data]);
+}
+```
+**The hook.** `useSyncExternalStore` hands every component the same copy and
+re-draws them all together when a new one is published. `{ db, ...actions }`
+spreads the actions next to the data, so a screen can write `store.db.posts`
+and `store.changeStatus(…)` from the same object.
 
 ---
 
@@ -656,38 +633,40 @@ write `store.db.posts` and `store.approve(…)` from the same object.
 without the answer being passed down through each component by hand.
 
 ```js
-const AuthContext = createContext(null);
-
 export function AuthProvider({ children }) {
-  const [sessionId, setSessionId] = useState(readSessionId);
-  const store = useStore(null);
+  const store = useStore();
+  const connection = useConnection();
+  const user = useMemo(() => findUser(store.db, store.db.viewerId), [store.db]);
 ```
-Only the *id* of the signed-in account is held in state; the account itself
-is looked up from the store on every render. So when an admin suspends
-somebody, it takes effect for that person immediately — there is no stale
-copy.
+Who is signed in is whatever the server says: the copy of the records carries
+the signed-in account's id (`viewerId`) along with everything else, re-read
+every few seconds. So when an admin suspends somebody, changes their role or
+resets their password, it takes effect for that person straight away.
 
 ```js
-  const user = useMemo(() => {
-    const found = store.db.users.find((candidate) => candidate.id === sessionId);
-    if (!found) return null;
-    const { password, ...safe } = found;
-    return { ...safe, initials: initialsOf(found.name) };
-  }, [store.db.users, sessionId]);
+  useEffect(() => {
+    if (connection !== 'loading') hideSplash();
+  }, [connection]);
+  …
+  if (connection === 'loading') return null;
+  if (connection === 'unreachable') return <ServerUnavailable />;
 ```
-`const { password, ...safe } = found` — destructure `password` out and gather
-everything else into `safe`. The password never leaves the store.
+The loading screen stays up until the server has answered once, so the first
+screen drawn already knows who is signed in — otherwise reloading an admin page
+would flash the log-in page. If the server cannot be reached at all, the app
+says so, with a *Try again* button.
 
 ```js
-  const value = useMemo(() => ({
-    user, signup, login, logout,
-    can: (permission) => roleCan(user, permission),
-    home: homeFor(user),
-  }), [user, signup, login, logout]);
+      signup: (details) => startSession(store.register(details)),
+      login: (credentials) => startSession(store.authenticate(credentials)),
+      logout: async () => { setSignedOut(true); forgetWave(); await store.signOut(); },
+```
+Signing up and in answer `{ error }` or `{}`. Nothing needs sending anywhere
+afterwards: once `user` is set, the `/login` and `/signup` routes forward the
+person themselves. `signedOut` remembers that somebody left *on purpose*, so the
+guards send them to the board rather than to the log-in page.
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
-}
-
+```js
 export function useAuth() {
   const context = useContext(AuthContext);
   if (!context) throw new Error('useAuth must be used inside <AuthProvider>.');
@@ -704,28 +683,28 @@ time.
 
 | Guard | Lets through | Otherwise |
 |---|---|---|
-| `RequireAuth` | anyone signed in | → `/login`, remembering where they were going |
-| `RequirePermission` | signed in **and** holding the permission | → their own dashboard |
-| `RedirectIfSignedIn` | signed out (for `/login`, `/signup`) | → their dashboard |
-| `AdminHomeRedirect` | non-admins | admins → the panel (or `to=`) |
+| `RequireAuth` | anyone signed in | → `/login`, remembering where they were going (or the board, just after "Log out") |
+| `RequirePermission` | signed in **and** holding the permission | → their own home page |
+| `RedirectIfSignedIn` | signed out (for `/login`, `/signup`) | → where they were going, or their home page |
+| `AdminHomeRedirect` | non-admins | admins → `to=` (their account page in the panel) |
 
 ```js
-export function RequirePermission({ permission }) {
-  const { user, can } = useAuth();
+function SignInFirst() {
+  const { signedOut } = useAuth();
   const location = useLocation();
-  if (!user) return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
-  if (!can(permission)) return <Navigate to={homeFor(user)} replace />;
-  return <Outlet />;
+  if (signedOut) return <Navigate to="/" replace />;
+  return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
 }
 ```
 Rendering `<Navigate>` *is* the redirect. `state={{ from }}` travels with it,
-invisibly, so `/login` can send the person on afterwards. `<Outlet />` draws
-whichever child route matched, once the check passes. Somebody signed in but
-not allowed is sent home rather than shown a locked door — announcing "an
-admin area exists" tells a stranger more than they need.
+invisibly, so `/login` can send the person on afterwards — `RedirectIfSignedIn`
+reads it the moment the account is confirmed. Somebody signed in but not
+allowed is sent home rather than shown a locked door — announcing "an admin
+area exists" tells a stranger more than they need.
 
 These guards decide what the app *draws*. They run in the visitor's browser
-and are not security; the server has to check again (see `middleware/auth.js`).
+and are not security; the server checks again on every request (see
+`middleware/auth.js`).
 
 #### `App.js`
 
@@ -736,11 +715,12 @@ and are not security; the server has to check again (see `middleware/auth.js`).
   <BrowserRouter …>
     <Routes>
       <Route element={<Layout />}>
-        <Route index element={<AdminHomeRedirect><Home /></AdminHomeRedirect>} />
+        <Route index element={<Home />} />
       </Route>
 ```
-The board at `/`, inside the student site's frame. An admin who lands here is
-forwarded to the panel.
+The board at `/`, inside the student site's frame — open to everybody, the
+administrator included: they can read, post and vote like anyone else.
+**View site** in the admin panel's top bar brings them here.
 
 ```jsx
       <Route element={<RequireAuth />}>
@@ -782,23 +762,44 @@ so they were removed.
 #### `components/Navbar.jsx`
 
 **What it is:** the navy bar at the top of the student site: logo, search
-box, and either the auth buttons or the profile circle.
+box, and either the auth buttons or the "Hi, Juan" greeting and the profile
+circle.
 
 ```jsx
 <div className="flex items-center gap-2 sm:gap-4">
   <Link to="/" className="flex min-h-[44px] min-w-[44px] shrink-0 items-center" aria-label="CampusVoiceBox home">
-    <span className="hidden sm:block"><Logo tone="light" /></span>
-    <span className="sm:hidden"><Logo tone="light" showText={false} /></span>
+    <span className="hidden sm:block"><Logo tone="light" showSeal /></span>
+    <span className="sm:hidden"><Logo tone="light" showSeal showText={false} /></span>
   </Link>
-  <div className="min-w-0 flex-1 sm:max-w-2xl"><SearchBar /></div>
-  <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">…buttons…</div>
+  <div className={`flex-1 sm:max-w-2xl ${user ? 'min-w-[7.5rem] md:min-w-[13rem]' : 'min-w-0'}`}>
+    <SearchBar />
+  </div>
+  <div className={`ml-auto flex items-center gap-1.5 sm:gap-2 ${user ? 'min-w-0' : 'shrink-0'}`}>
+    {user ? (
+      <div className="flex min-w-0 items-center gap-1 md:gap-4"><NavGreeting /><ProfileMenu /></div>
+    ) : (
+      <>…Log in… <Link to="/signup" className="hidden min-[375px]:block">…Sign up…</Link></>
+    )}
+  </div>
 </div>
 ```
 One flex row at every width. The logo never shrinks; the search box takes
-what is left (`flex-1`) but may shrink to fit (`min-w-0`); the buttons are
-pushed right (`ml-auto`). On phones the wordmark is dropped (`sm:hidden` /
-`hidden sm:block` swap the two logo versions) and the buttons lose 4px of
-padding (`!px-2.5 sm:!px-3.5`) so all three fit on a 360px screen.
+what is left (`flex-1`); the right-hand end is pushed right (`ml-auto`). Both
+logo versions carry the school seal (`showSeal`); on phones only the wordmark
+is dropped (`sm:hidden` / `hidden sm:block` swap the two versions). The marks
+shrink from 36px to 32px on phones and the buttons lose 4px of padding
+(`!px-2.5 sm:!px-3.5`).
+
+Who gives way when the row is full depends on who is signed in:
+
+- **Signed out**, the buttons never shrink (`shrink-0`) and the search box may
+  (`min-w-0`). Below 375px "Sign up" is hidden, because the two buttons left
+  the search box no room to type on a 320px screen; the log-in page links to
+  sign-up.
+- **Signed in**, the search box keeps a minimum width — 120px below `md`, 208px
+  from `md` up, matching the dropdown's own width in `SearchBar.jsx` — and the
+  greeting's name gives way instead (`min-w-0`, cut short with "…", see
+  `NavGreeting.jsx`).
 
 #### `components/SearchBar.jsx`
 
@@ -809,54 +810,68 @@ React state, so the board can read them from anywhere, Back works, and a
 filtered view can be shared as a link.
 
 ```js
-const [searchParams, setSearchParams] = useSearchParams();
+const { searchParams, setFilter } = useFilterParams({ alsoClear: ['mine'] });
 const category = searchParams.get('category') ?? '';
-
-function updateParam(key, value) {
-  const next = new URLSearchParams(searchParams);
-  if (value) next.set(key, value); else next.delete(key);
-  next.delete('mine');
-  setSearchParams(next, { replace: true });
-}
+…
+<select onChange={(event) => setFilter('category', event.target.value)}>
 ```
-Copy the current params, change one, write them back. `replace: true` means
-typing a search does not add a history entry per letter. Clearing `mine`
-means searching always searches the whole board.
+`useFilterParams` (`hooks/useFilterParams.js`) is the one way every filter
+in the app changes the address — this box, the board's sort, and the admin
+lists. `setFilter` copies the current params, changes one (an empty value
+removes it), and writes them back with `replace: true`, so typing a search
+does not add a history entry per letter. `alsoClear: ['mine']` means
+searching always searches the whole board, not just the student's own
+posts.
 
 ```jsx
 <div className="relative shrink-0 border-r border-slate-200">
-  <span aria-hidden="true" className="pointer-events-none absolute inset-0 grid place-items-center text-navy-700 sm:hidden">
+  <span aria-hidden="true" className="pointer-events-none absolute inset-0 grid place-items-center text-navy-700 md:hidden">
     <svg …filter icon…/>
     {category && <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-mustard ring-2 ring-white" />}
   </span>
-  <select … className="w-11 sm:w-32 … opacity-0 sm:opacity-100">
+  <select … className="w-11 md:w-32 … opacity-0 md:opacity-100">
 ```
-On phones the dropdown is an icon: the real `<select>` is still there, 44px
-wide at zero opacity, laid over a filter icon. A tap on the icon is a tap on
-the select, so the phone's own picker opens with every label at full size.
-`pointer-events-none` on the icon lets the tap through; the mustard dot says
-a category is applied. From `sm` up the select shows its own text.
+Below `md` (768px) the dropdown is an icon: the real `<select>` is still
+there, 44px wide at zero opacity, laid over a filter icon. A tap on the icon
+is a tap on the select, so the device's own picker opens with every label at
+full size. `pointer-events-none` on the icon lets the tap through; the
+mustard dot says a category is applied. From `md` up the select shows its own
+text. The icon lasts past phones on purpose: from 640px the wordmark returns
+beside the logo, and a 128px dropdown on top of it left the field about 15px
+to type in.
 
 ```js
-function useIsPhone() {
-  const [isPhone, setIsPhone] = useState(() => window.matchMedia(PHONE_QUERY).matches);
+function useFittingPlaceholder(ref) {
+  const [placeholder, setPlaceholder] = useState(FULL_PROMPT);
   useEffect(() => {
-    const media = window.matchMedia(PHONE_QUERY);
-    const update = (event) => setIsPhone(event.matches);
-    media.addEventListener('change', update);
-    return () => media.removeEventListener('change', update);
-  }, []);
-  return isPhone;
+    const observer = new ResizeObserver(([entry]) => {
+      const room = entry.contentRect.width;
+      setPlaceholder(room >= 160 ? 'Search suggestions...' : room >= 60 ? 'Search' : '');
+    });
+    observer.observe(ref.current);
+    return () => observer.disconnect();
+  }, [ref]);
+  return placeholder;
 }
 ```
-A custom hook: is the CSS "phone" media query matching right now? Used only
-to shorten the placeholder to "Search" on phones.
+A custom hook that measures the search field and picks the longest prompt
+that fits: the full "Search suggestions..." (140px of text) on a wide field,
+"Search" (45px) on a phone, and nothing at all where even that would be cut
+off - the magnifying glass says "search" on its own. It measures the field
+itself, not the screen, because the field's width also depends on what else
+shares the navbar: the profile circle leaves more room than the two Log in /
+Sign up buttons. **ResizeObserver** is the browser feature that reports when
+an element changes size; `contentRect.width` is the room inside the padding.
+The cut-offs (160 and 60) are the words' widths plus about 12px that Chrome
+and Safari keep free for the search box's clear (×) button, even while it is
+hidden, and a little slack for other platforms' slightly wider fonts.
 
 #### `components/ProfileMenu.jsx`
 
 **What it is:** the profile circle at the right of the navbar and its
 drop-down: who is signed in, links to the dashboard / account / admin panel,
-"Your Suggestions" and "Your Voice Outs", category shortcuts, and Log out.
+"Your Suggestions" and "Your Voice Outs", and Log out. (The categories are
+not repeated here — the search box's dropdown already offers them.)
 
 ```js
 const menuRef = useRef(null);
@@ -874,17 +889,16 @@ useEffect(() => {
 outside". The listeners are only attached while the menu is open (the effect
 depends on `open`) and removed in the cleanup.
 
-```js
-function showMyPosts(group) {
-  const next = new URLSearchParams();
-  next.set('mine', group);
-  setSearchParams(next);
-  …
+```jsx
+function myPostsLink(group) {
+  return `/?mine=${group}`;
 }
 …
-<button onClick={() => showMyPosts('concern')}>Your Voice Outs</button>
+<Link to={myPostsLink('concern')} role="menuitem">Your Voice Outs</Link>
 ```
-"Your Voice Outs" is `?mine=concern` — the concern *family* from
+These are links, not buttons, so they work from any page: they always land
+on the board with the filter set, and the board scrolls down to the results
+once it is on screen. "Your Voice Outs" is `?mine=concern` — the concern *family* from
 `workflow.js`. It used to be a separate stored field, `type`; now the kind is
 the one classification and this filter reads off it.
 
@@ -911,13 +925,24 @@ if (!checkFields(trimmedTitle, trimmedMessage).clean) {
   setError(rejectionMessage());
   return;
 }
-onSubmit({ kind, category, title: trimmedTitle, message: trimmedMessage, anonymous, attachments });
+setSending(true);
+const result = await onSubmit({ kind, category, title: trimmedTitle, message: trimmedMessage, anonymous, attachments: … });
+setSending(false);
+if (result.error) { setError(result.error); return; }
 onClose();
 ```
-Nothing is saved until it passes the rudeness filter in
-`services/moderation.js`. On success the finished post is handed to whoever
-opened the modal via the `onSubmit` callback — the modal does not know about
-the store.
+Nothing is sent until it passes the rudeness filter in
+`services/moderation.js` (the server runs the same filter again). The finished
+post is handed to whoever opened the modal via the `onSubmit` callback — the
+modal does not know about the store — and the modal *waits for the answer*:
+only a post the server accepted closes it. A refusal, or no connection, keeps it
+open with the reason, so nothing the student typed is lost.
+
+The pop-up itself — the dark backdrop, Escape, the page behind not scrolling,
+the ✕ — is `components/PopupFrame.jsx`, the one frame the post form, the "are
+you sure?" box (`ConfirmDialog`) and the admin dialogs (`admin/Modal.jsx`) all
+sit in. Each keeps its own look; only the behaviour is shared, so the three
+cannot drift apart.
 
 #### `components/SuggestionCard.jsx`
 
@@ -940,6 +965,11 @@ const hasMajority = share > 50;
 The vote meter shows the post's share of *every* vote on the board. There is
 no target and no maximum — the question a suggestion box answers is "which of
 these does the campus want most", and that has no ceiling.
+
+The photos and PDFs on a card are drawn by `components/AttachmentList.jsx`
+(the review dialog uses it too): each file is fetched from the server on its
+own (`hooks/useApiFile.js`), a photo as a square thumbnail and anything else as
+its file name, and a click opens it full size in a new tab.
 
 #### `pages/Home.jsx`
 
@@ -965,10 +995,18 @@ this only when one of the listed inputs changes.
 ```js
 function openModal(mode) {
   if (!user) { navigate('/login'); return; }
+  if (!can(PERMISSIONS.SUBMIT_POSTS)) { setError('Your account is suspended, so posting is turned off.'); return; }
   setModalMode(mode);
 }
 ```
-Posting requires an account, so guests are sent to log in.
+Posting requires an account, so guests are sent to log in — and a suspended
+account is told why, rather than handed a form the server would refuse.
+
+```jsx
+<SuggestionCard … votes={post.votes} hasVoted={post.hasVoted} … />
+```
+The server sends each post's vote *count* and whether *this* person voted —
+never who else did.
 
 #### `pages/Login.jsx` and `pages/Signup.jsx`
 
@@ -986,20 +1024,75 @@ inputs share one piece of code. `[field]` in square brackets means "the
 property whose name is in the variable".
 
 ```js
-function handleSubmit(event) {
+async function handleSubmit(event) {
   event.preventDefault();
   …
-  const result = login({ email: form.email.trim(), password: form.password });
-  if (result.error) { setError(result.error); return; }
-  navigate(from ?? result.home, { replace: true });
+  setBusy(true);
+  const result = await login({ email: form.email.trim(), password: form.password });
+  if (!result.error) return;
+  setBusy(false);
+  setError(result.error);
 }
 ```
-`preventDefault` stops the browser reloading the page on submit. On success,
-go to where the route guard said the person was heading (`from`), or to the
-dashboard for their role.
+`preventDefault` stops the browser reloading the page on submit. The form waits
+for the server, with the button showing it is busy. On success it does nothing
+more: `RedirectIfSignedIn`, around this route, sends the person where they were
+heading (`from`) the moment the account is confirmed.
 
-Sign-up never sets a role: registering produces a student or user account,
-and an admin can only be made afterwards by an admin, from the user profile.
+The sign-up form never chooses a role — the server decides it. Signing up is
+for students and users only: `register()` in
+`backend/src/controllers/authController.js` makes a student account (with a
+student number) or a user account (without), never an administrator:
+
+```js
+await client.query('SELECT pg_advisory_xact_lock(470700)');
+…
+const role = values.student_id ? 'student' : 'user';
+```
+The lock makes sign-ups take turns, so two people registering at the same
+moment cannot both claim one email. The administrator is the default account:
+when the server starts and the database has none, `ensureDefaultAdmin()` in
+`backend/src/config/defaultAdmin.js` creates it from `ADMIN_NAME`,
+`ADMIN_EMAIL` and `ADMIN_PASSWORD` — under the same lock — and logs it as
+*Became the first administrator*. An admin is only ever made after that by an
+admin, from the user profile.
+
+#### `pages/ForgotPassword.jsx` and `pages/ResetPassword.jsx`
+
+**What they are:** a forgotten password, reset by its owner with an emailed
+link — reached from "Forgot password?" under the log-in form. Nobody else ever
+sets anybody's password.
+
+```js
+const result = await store.requestPasswordReset(email.trim());
+```
+The server answers the same whether or not the email has an account ("if it
+does, a link is on its way"), and sends the email only after answering, so
+neither the words nor the time taken tell anybody who has an account
+(`forgotPassword` in `backend/src/controllers/authController.js`). The email
+goes out through the school's mail server (`backend/src/config/mail.js`);
+while developing without one, it is printed in the server's console instead.
+
+```js
+const fromLink = () => new URLSearchParams(window.location.hash.slice(1)).get('token') ?? '';
+```
+The link is `/reset-password#token=…`. The part after `#` is never sent to a
+server, so the secret stays out of every web server's log; the page reads it
+once and takes it off the address bar. The server keeps only a SHA-256 of it,
+lets it work once within an hour, then signs the account out everywhere.
+
+#### `components/ChangePasswordForm.jsx`
+
+**What it is:** changing a password you know, signed in — on the student's
+account page and on an administrator's own profile.
+
+```js
+const result = await store.changeOwnPassword(passwords.current, passwords.next);
+```
+The current password is still asked for: a session left open on a shared
+computer must not be enough to take an account over. The server signs out
+every other device and answers with a new token, which `changeOwnPassword` in
+`services/store.js` stores — so the person stays signed in here.
 
 #### `pages/student/Dashboard.jsx`
 
@@ -1030,7 +1123,13 @@ const [draft, setDraft] = useState(() => {
 ```
 A lazy initialiser builds the draft from the shared field list, seeded from
 the signed-in account. The email is drawn as a `disabled` input — shown, not
-editable.
+editable — and the server ignores an email sent from this form anyway
+(`PATCH /api/account` accepts the name and school details only). The profile
+photo is saved on its own, with `PUT /api/account/photo`, and the password
+in its own panel below the form (`components/ChangePasswordForm.jsx`). The
+school fields are greyed out until the
+person allows CampusVoiceBox to keep them, in the *Privacy & Data* panel at
+the foot of the page — see [section G](#g-privacy-consent-and-the-policies).
 
 ---
 
@@ -1068,8 +1167,8 @@ sidebar without any page checking the role itself.
 ```js
 const counts = useMemo(() => ({
   pending: db.posts.filter((post) => AWAITING_REVIEW.includes(post.status)).length,
-  openWork: db.posts.filter((post) => kindInfo(post.kind).needsAssignment && OPEN_STATUSES.includes(post.status)).length,
-  unread: notificationsFor(db, user).filter((note) => !note.read).length,
+  openWork: db.posts.filter(isOpenWork).length,
+  unread: unreadCountFor(db, user),
 }), [db, user]);
 ```
 The badge numbers, recounted whenever the data changes. `{item.badge > 0 && <Badge>…}`
@@ -1244,33 +1343,40 @@ so a change to `next` in `workflow.js` removes a button rather than leaving
 one that performs a forbidden move.
 
 ```js
-function run(action, done) {
-  try {
-    const result = action();
-    if (result?.error) { setError(result.error); return; }
-    setError('');
-    setJustDid(done);
-    setReassigning(false);
-    setResolvingUnassigned(false);
-  } catch (failure) { setError(failure.message); }
+async function run(action, done) {
+  if (busy) return false;
+  setBusy(true);
+  const result = await action();
+  setBusy(false);
+  if (result.error) { setError(result.error); return false; }
+  setError('');
+  setJustDid(done);
+  setReassigning(false);
+  setResolvingUnassigned(false);
+  return true;
 }
 ```
-Every action funnels through here. On success the dialog **stays open**: the
-page re-reads `post` from the store, so the progress line and the next-step
-section redraw for the new status, and `justDid` says what just happened.
+Every action funnels through here. `busy` means a double-click cannot send the
+same move twice. On success the dialog **stays open**: the page re-reads `post`
+from the store's fresh copy, so the progress line and the next-step section
+redraw for the new status, and `justDid` says what just happened. On a refusal
+— another admin got there first, say — the server's reason is shown and the
+dialog shows the submission as it now stands.
 It used to close on every click, which meant an approved concern vanished
 from the queue and had to be found again elsewhere before it could be
 assigned.
 
 ```js
-function handleReject() {
+async function handleReject() {
   if (!reason.trim()) { setError('Please give a reason. …'); return; }
-  run(() => store.changeStatus(post.id, 'rejected', { reason: reason.trim() }), 'Rejected. …');
+  const rejected = await run(() => store.changeStatus(post.id, 'rejected', { reason: reason.trim() }), 'Rejected. …');
+  if (rejected) setReason('');
 }
 ```
 A rejection with no reason is the thing students complain about most, so the
-form insists on one. This is the *only* reject button — the old progress line
-had a second one that skipped the reason.
+form insists on one — and so does the server. This is the *only* reject button
+— the old progress line had a second one that skipped the reason. The reason is
+kept if the rejection did not go through, so it need not be retyped.
 
 ```js
 const assignForm = (buttonLabel, size = 'md') => (<>…<Select id="assign-department" …/>…<Button onClick={handleAssign}>{buttonLabel}</Button></>);
@@ -1320,7 +1426,8 @@ const isSelf = account.id === user.id;
 `useParams` reads `:userId` from the address. The early return means nothing
 below has to keep checking for a missing account. `isSelf` guards the
 controls you must never be able to use on yourself: suspend, delete, change
-role.
+role. (The server refuses all three as well.) Nobody's password is set from
+here — on your own profile, the *Password* panel changes yours.
 
 ```js
 const confirmCopy = {
@@ -1330,7 +1437,9 @@ const confirmCopy = {
 }[confirming];
 ```
 An object used as a lookup table: one `ConfirmDialog`, three sets of wording,
-picked by which string is in `confirming`.
+picked by which string is in `confirming`. Every change on the page goes
+through one `act()` helper — one request at a time, the server's reason shown
+if it refuses.
 
 ```jsx
 <DetailList items={[
@@ -1397,7 +1506,8 @@ badge.
 
 **What it is:** a read-only description of what the platform recognises —
 categories, kinds, statuses, departments, notification types, roles — and
-where each is defined, plus one button to reset the demo data.
+where each is defined, with a note on where the records are kept and what
+actually protects them.
 
 It was called "Settings", which promised something it does not offer: there
 is nothing here to set. Everything drawn is `.map` over a list imported from
@@ -1407,46 +1517,74 @@ is nothing here to set. Everything drawn is `.map` over a list imported from
 
 ### F. The backend — `backend/src/`
 
-The backend is a real Express + PostgreSQL API that mirrors the frontend's
-model. **The frontend does not call it yet** — `store.js` reads localStorage —
-so these files are the shape of the future, not the running system. Only the
-parts touched in this pass are covered.
+The server everything is checked and kept on: Express for the requests,
+PostgreSQL for the records.
 
 #### `middleware/auth.js`
 
 ```js
 const ROLE_PERMISSIONS = {
   admin: ['view_admin', 'moderate_posts', 'manage_concerns', 'view_identity', 'manage_users',
-          'delete_users', 'manage_admins', 'view_analytics', 'view_audit_log', 'manage_settings',
+          'delete_users', 'manage_admins', 'view_analytics', 'view_audit_log',
           'submit_posts', 'vote'],
   student: ['submit_posts', 'vote'],
   user: ['submit_posts', 'vote'],
 };
 ```
-The server's copy of `roles.js` — the same twelve permissions, checked
-programmatically to match. This copy is the one that actually counts: the
-frontend's guards decide what to *draw*; this decides what the API will *do*.
+The server's copy of `roles.js` — the same eleven permissions. This copy is the
+one that actually counts: the frontend's guards decide what to *draw*; this
+decides what the API will *do*.
+
+```js
+async function accountFor(payload) {
+  const { rows } = await pool.query(
+    'SELECT id, name, email, role, status, password_changed_at FROM users WHERE id = $1', [payload.sub]);
+  const account = rows[0];
+  if (!account) return null;
+  if (account.password_changed_at) {
+    const changedAt = Math.floor(new Date(account.password_changed_at).getTime() / 1000);
+    if (payload.iat < changedAt) return null;
+  }
+  return account;
+}
+```
+The account a token stands for, read fresh on **every** request rather than
+trusted from the token — a token issued an hour ago would still say "admin"
+after the account was demoted. A token for a deleted account, or one issued
+before the password last changed (`iat` is when it was issued, in seconds), is
+refused: that is what makes a password reset lock out whoever held the old
+password. `$1` is a parameterised placeholder: the id is supplied separately,
+never pasted into the SQL.
 
 ```js
 function requirePermission(permission) {
-  return async function check(req, res, next) {
-    const { rows } = await pool.query('SELECT id, role, status FROM users WHERE id = $1', [req.user.id]);
-    const account = rows[0];
-    if (!account) return res.status(401).json({ error: 'This account no longer exists.' });
-    if (account.status === 'suspended') return res.status(403).json({ error: 'This account has been suspended.' });
-    const allowed = ROLE_PERMISSIONS[account.role] ?? [];
-    if (!allowed.includes(permission)) return res.status(404).json({ error: 'Not found.' });
-    req.user.role = account.role;
+  return function check(req, res, next) {
+    if (req.user.status === 'suspended') return res.status(403).json({ error: 'This account has been suspended.' });
+    if (!can(req.user, permission)) return res.status(404).json({ error: 'Not found.' });
     next();
   };
 }
 ```
-Middleware that re-reads the account's role from the database on **every**
-request rather than trusting the token — a token issued an hour ago still
-says "admin" after the account has been demoted. `$1` is a parameterised
-placeholder: the id is supplied separately, never pasted into the SQL. An
-unauthorised caller gets 404, not 403 — telling them the endpoint exists is
-more than they need to know.
+Goes after `requireAuth`, which has just read the account. An unauthorised
+caller gets 404, not 403 — telling them the endpoint exists is more than they
+need to know.
+
+#### `controllers/stateController.js`
+
+```js
+const isAdmin = can(viewer, 'view_admin');
+…
+`SELECT p.*, u.name AS author_name, … FROM posts p LEFT JOIN users u ON u.id = p.author_id
+  WHERE $1::boolean OR p.author_id = $2 OR p.status = ANY($3)`
+…
+authorId: isAdmin || own ? str(row.author_id) || null : null,
+authorName: !row.is_anonymous || seesIdentity || own ? row.author_name : null,
+```
+`GET /api/state` — everything one person may see, in one answer. An
+administrator gets every post; anybody else the published ones and their own.
+And this is where anonymity is kept: the name behind an anonymous post is only
+put into the answer for somebody with `view_identity`, or for the author. To
+everybody else it simply is not there.
 
 #### `routes/adminRoutes.js`
 
@@ -1454,16 +1592,24 @@ more than they need to know.
 const router = express.Router();
 router.use(requireAuth);
 …
-router.patch('/users/:id/role', requirePermission('manage_admins'), async (req, res, next) => {
-  const { role } = req.body;
-  if (!['admin', 'student', 'user'].includes(role)) return res.status(400).json({ error: 'Unknown role.' });
-  if (String(req.user.id) === String(req.params.id)) return res.status(400).json({ error: 'You cannot change your own role.' });
+router.patch('/posts/:id/status', requirePermission('moderate_posts'), async (req, res, next) => {
+  …
+  const result = await inTransaction(async (client) => {
+    const post = await lockPost(client, id);
+    if (!post) return { status: 404, error: MISSING_POST };
+    if (!STATUSES[post.status].next.includes(status)) {
+      return { status: 409, error: cannotMove(post, `moved to ${STATUSES[status].label}`) };
+    }
+    await client.query('UPDATE posts SET status = $1, rejection_reason = $2, updated_at = now() WHERE id = $3', …);
+    await writeLog(client, req, action, { … });
+    await notifyAuthor(client, post, notice.type, notice);
 ```
 Every route carries its own `requirePermission(…)`; `router.use(requireAuth)`
-makes it impossible to add one that is not at least authenticated. The
-self-check — "you cannot change your own role" — is the server-side twin of
-`isSelf` in `UserProfile.jsx`, and the thing that keeps the one admin role
-honest.
+makes it impossible to add one that is not at least authenticated. Then, in
+one transaction: hold the row (`FOR UPDATE`, so two admins acting at once take
+turns), refuse a move the workflow does not allow — the same `next` lists the
+review dialog draws its buttons from (`models/workflow.js`) — make the change,
+write the audit entry, tell the student. All of it, or none.
 
 ```js
 async function inTransaction(handler) {
@@ -1481,19 +1627,42 @@ async function inTransaction(handler) {
 ```
 Changing a status, writing the audit entry and notifying the student must
 succeed or fail *together*. A half-applied approval — published but nobody
-told — is worse than a failed one.
+told — is worse than a failed one. It lives in `models/transaction.js`.
+
+The self-checks — no changing your own role or status, no resetting your own
+password, no deleting yourself — are here too, as the server-side twin of
+`isSelf` in `UserProfile.jsx`, and the thing that keeps the one admin role
+honest.
 
 #### `controllers/authController.js`
 
 ```js
-const passwordHash = await bcrypt.hash(password, 10);
-const result = await pool.query(
-  `INSERT INTO users (name, email, password_hash, student_id, course, year_level, section)
-   VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING …`, [ … ]);
+const passwordHash = await bcrypt.hash(req.body.password, 10);
+…
+const role = values.student_id ? 'student' : 'user';
 ```
 bcrypt turns the password into a one-way hash; the plain password is never
-stored. The `role` column is deliberately absent from the INSERT so it takes
-its `'student'` default — registration must never be able to choose a role.
+stored. The role is decided here and nowhere else — registration can never
+choose one. A wrong email and a wrong password get the same message, and take
+the same time to answer (the password is checked against a dummy hash when no
+account matches), so the log-in form cannot be used to find out which emails
+have accounts.
+
+#### `controllers/suggestionsController.js`
+
+```js
+if (!checkFields(title, message).clean) {
+  return res.status(400).json({ error: rejectionMessage() });
+}
+…
+const { files, error } = readAttachments(req.body.attachments);
+```
+Posting checks everything the form checked, again — the lengths, the type, the
+category, the rudeness filter (`models/moderation.js`, the same code as the
+website's) — because a request sent without the form skips the form. Each file
+must be a photo or a PDF within its size limit, and its first bytes must really
+be that kind of file (`models/files.js`); then the post and its files are
+written in one transaction.
 
 #### `models/schema.sql`
 
@@ -1504,12 +1673,168 @@ role VARCHAR(20) NOT NULL DEFAULT 'student'
 `VARCHAR(20)`: text up to 20 characters. `NOT NULL`: must have a value.
 `DEFAULT 'student'`: what it gets when left out. `CHECK (…)`: a rule the
 database enforces on every write — a row with any other role is refused
-outright, whatever the application tried.
+outright, whatever the application tried. The statuses and kinds are checked
+the same way, against exactly the six statuses and five kinds the website uses.
 
-> **Known drift.** The rest of `schema.sql` and `adminRoutes.js` still carry
-> the older workflow — ten statuses, a `priority` field, a `feedback` kind, an
-> `assigned` status. That is the one piece of work to do in a single pass
-> when the API is wired up; see `GUIDE.md`.
+### G. Privacy, consent and the policies
+
+#### `services/consent.js`
+
+**What it is:** the one list of everything the site keeps in the browser, and
+the person's answer about it.
+
+```js
+export const STORAGE_ITEMS = [
+  { name: STORAGE_KEYS.token, category: 'necessary', where: 'Local storage', … },
+  { name: STORAGE_KEYS.consent, category: 'necessary', … },
+  { name: STORAGE_KEYS.greetingWaved, category: 'functional', …,
+    clear: () => sessionStorage.removeItem(STORAGE_KEYS.greetingWaved) },
+];
+```
+A **registry**: the code that writes an item takes its name from
+`STORAGE_KEYS`, and the Cookie Policy's table is drawn from `STORAGE_ITEMS`
+(`pages/legal/CookiePolicy.jsx`) — so the policy cannot describe storage that
+does not exist, or miss storage that does. There are no cookies.
+
+```js
+export function isAllowed(category) {
+  if (category === 'necessary') return true;
+  return snapshot.choice?.categories?.[category] === true;
+}
+```
+Anything optional asks `isAllowed()` before writing (`services/greeting.js`
+does). `removeRefused()` runs when the file loads and after every choice, and
+calls each refused item's `clear` — so saying no *deletes*, it does not just
+stop new writes. A choice is stored with `COOKIE_CONSENT_VERSION`; a choice
+for any other version counts as no choice at all, so changing what a category
+covers asks everybody again.
+
+#### `components/CookieConsent.jsx`
+
+**What it is:** the banner on a first visit and the settings window, drawn once
+for the whole site in `App.js`, beside `<Routes>` — so it appears on the log-in
+pages and in the admin panel too.
+
+```js
+async function decide(categories) {
+  const made = saveChoice(categories);
+  closeCookieSettings();
+  if (!user) return;
+  const result = await store.saveCookieConsent(made);
+  …
+}
+```
+The choice applies on this device at once; if somebody is signed in it is also
+saved with their account (`PUT /api/account/cookie-consent`). Logging in on a
+device with no choice — or an older one — takes the account's. A choice made
+while signed *out* is never copied onto the next person's account: on a shared
+computer, that would be somebody else's answer. *Accept All* and *Reject
+Optional* are the same size and colour on purpose — neither is dressed up as
+the right answer.
+
+#### `data/policies.js` and `components/PolicyPage.jsx`
+
+**What they are:** the policies' versions, the facts only the school can
+supply, and the frame the three policy pages share.
+
+```js
+export const ORGANIZATION = {
+  dpoEmail: { value: null, describe: 'the Data Protection Officer\'s email address' },
+  …
+};
+```
+```jsx
+<ToConfirm fact="dpoEmail" />
+```
+A fact that is still `null` is drawn as a highlighted *[To be confirmed: …]*;
+fill in `value` and the real text appears everywhere it is used. Legal
+questions are wrapped in `<ForReview>`. While any fact is unconfirmed, every
+policy says at the top that it is a draft. The versions are dates and exist
+twice — here and in `backend/src/models/policies.js` — because the server
+must only accept the current ones.
+
+#### `pages/Signup.jsx` — the two tick boxes
+
+```js
+schoolConsent: false,
+acceptTerms: false,
+…
+termsVersion: POLICY_VERSIONS.terms,
+privacyVersion: POLICY_VERSIONS.privacy,
+```
+Both boxes start unticked — only the person ticks them. School details have
+their own box, separate from the Terms, because agreeing to the rules is not
+agreeing to share more information. The versions the page showed are sent
+with the account; the server refuses old ones (`409`, "reload"), so nobody
+accepts text they were never shown. A refusal carries `field: 'email'` when it
+is about the email, so the message lands beside the right box.
+
+#### `components/TermsGate.jsx`
+
+**What it is:** the "please accept the Terms" dialog, for an account whose
+accepted Terms are older than the version it now needs.
+
+```js
+useEffect(() => {
+  const bringBack = () => setPutOff(false);
+  window.addEventListener(TERMS_REQUIRED_EVENT, bringBack);
+  …
+}, []);
+```
+It can be put off with *Not now* — reading is never blocked. But the **server**
+refuses posts and votes until the Terms are accepted
+(`backend/src/middleware/terms.js`, `403` with `mustAcceptTerms`), and
+`change()` in `store.js` turns that answer into `TERMS_REQUIRED_EVENT`, which
+brings the dialog back. An account holding school details from before consent
+was asked gets a second, unticked box: leave it, and accepting removes them.
+
+#### `components/PrivacyData.jsx`
+
+**What it is:** the *Privacy & Data* panel on `/account` — and on an
+administrator's own profile, since `/account` forwards admins there.
+
+Every part is one server call on the signed-in person's own account: allowing
+or withdrawing school-details consent (`PUT /api/account/school-consent`),
+opening the cookie window, *Download my data* (`GET /api/account/export`, saved
+with `saveFile` from `services/csv.js`), and privacy requests
+(`POST /api/privacy-requests`). `Account.jsx` greys out the school fields and
+leaves them out of the save until consent is given:
+
+```js
+STUDENT_EDITABLE_FIELDS.filter((field) => schoolAllowed || !field.school)
+```
+
+#### `pages/admin/PrivacyRequests.jsx`
+
+**What it is:** handling those requests, behind `manage_privacy` — kept apart
+from the submission queues, because a deletion request is not moderation.
+
+```js
+const isOwn = request.userId === user.id;
+…
+{isOpen && !isOwn && ( /* the reply box and the buttons */ )}
+```
+A request about the signed-in admin's own account is shown but cannot be
+acted on — another administrator must, so nobody is the only witness to what
+was done with their own data. The server refuses it too. Completing a
+deletion request deletes the account in the same step, keeping or deleting
+the person's submissions as chosen, and asks first.
+
+#### Backend: `controllers/privacyController.js`, `middleware/terms.js`, `models/policies.js`
+
+```js
+if (req.body.acceptTerms !== true) {
+  return res.status(400).json({ error: 'Please accept the Terms & Conditions to create your account.' });
+}
+```
+`=== true`, not "truthy": the text `"true"` is not acceptance. Every privacy
+route acts on `req.user` — never on an id from the request — so nobody can see
+or change another person's choices. What was agreed to goes into
+`policy_acceptances` in the same transaction as the change it records; the
+privacy log (`privacy_events`) is insert-only, like the activity log, and
+records no network address. `schoolDetailsRefused()` in
+`models/accountRules.js` is the one rule for school details, used by sign-up,
+the account page and the admin's edit alike.
 
 ---
 
@@ -1521,52 +1846,56 @@ student's phone to "resolved".
 **1. The student posts.** On the board, `Header.jsx` calls
 `Home.openModal('voice')`. `PostModal` opens with kind pre-set to `concern`.
 On submit it checks `moderation.js`, then calls `onSubmit({ kind, category,
-title, … })`. `Home.addSubmission` hands that to `store.createPost(…)`.
+title, … })` and waits. `Home.addSubmission` hands that to
+`store.createPost(…)`, which sends `POST /api/posts`.
 
-**2. The store saves it.** `createPost` runs inside `commit()`: read the db,
-add the post at the front with `status: 'pending'`, save to localStorage,
-message the other tabs, re-draw. No notification to admins — the queue will
-show it.
+**2. The server saves it.** `createPost` in `suggestionsController.js` checks
+it all again — the filter, the files — and inserts the post with the column's
+default `status: 'pending'`, and its files, in one transaction. No
+notification to admins — the queue will show it. The store fetches
+`/api/state` again; the form closes and the board says the post is waiting for
+review.
 
-**3. The admin sees it.** `AdminLayout` recounts `counts.pending` from the
-same `db`, so the Pending Approval badge reads 1. The dashboard's "Waiting
-for review" panel lists it (oldest first). Both link to
-`/admin/queue/pending?highlight=<id>`.
+**3. The admin sees it.** Within 15 seconds the admin panel's own copy is
+fetched again. `AdminLayout` recounts `counts.pending` from it, so the Pending
+Approval badge reads 1. The dashboard's "Waiting for review" panel lists it
+(oldest first). Both link to `/admin/queue/pending?highlight=<id>`.
 
 **4. The admin decides.** `Submissions` (with `lockedStatuses=AWAITING_REVIEW`)
 sees `?highlight=` and opens `SubmissionReview`. The progress line shows
 *Submitted* (step 1 of 4, because `kind.needsAssignment` is true). The
 "Next step: decide" section offers **Approve**. Clicking it calls
-`store.changeStatus(id, 'approved')`, which sets the status, writes the audit
-entry (`post_approved`) and the student's notification (`post_approved`) in
-one save. The dialog stays open; the line ticks *Submitted* and moves to
+`store.changeStatus(id, 'approved')` → `PATCH /api/admin/posts/:id/status`,
+which checks the move is allowed, sets the status, writes the audit entry
+(`post_approved`) and the student's notification (`post_approved`) in one
+transaction. The dialog stays open; the line ticks *Submitted* and moves to
 *Approved*; the green line says "…in the Open Work queue. Next: assign it…";
 the assign form is already below.
 
 **5. The admin assigns.** Still in the dialog, they pick a department
 (pre-suggested from the student's course by `collegeForProgram`) and click
-**Assign to department**. `store.assignConcern` sets the department and moves
-the status to `in_progress` — assigning *is* the work starting — and notifies
-the student. The line moves to *Assigned*. The post now appears in Open Work
+**Assign to department**. `PATCH …/assign` sets the department and moves the
+status to `in_progress` — assigning *is* the work starting — and notifies the
+student. The line moves to *Assigned*. The post now appears in Open Work
 (built from `ASSIGNABLE_KINDS`) with the department in its column, and on the
 Departments page under that college.
 
-**6. The student is told.** `student/Dashboard.jsx` reads the same post:
-status badge *In Progress*, "Being handled by: College of …", and the
-notifications panel shows "Your concern has been assigned".
+**6. The student is told.** `student/Dashboard.jsx` reads the same post from
+the student's own copy: status badge *In Progress*, "Being handled by: College
+of …", and the notifications panel shows "Your concern has been assigned".
 
 **7. The work is done.** From Open Work, the admin opens it; the only primary
 button is **Mark resolved**. They write the summary and click.
-`store.resolveConcern` sets `resolved`, stamps `resolvedAt`, notifies the
-student with the summary. The line reaches *Resolved*; Close becomes the
-primary button; the post leaves Open Work; Analytics' "Avg. Resolution Time"
-and the department's average both pick it up.
+`PATCH …/resolve` sets `resolved`, stamps `resolved_at`, notifies the student
+with the summary. The line reaches *Resolved*; Close becomes the primary
+button; the post leaves Open Work; Analytics' "Avg. Resolution Time" and the
+department's average both pick it up.
 
 **8. The student reads the outcome.** Their dashboard shows *Resolved* with the
 summary; the board card shows the Resolved badge.
 
-Every step above was one function in `store.js`, one screen reading the
-result, and no copying of data anywhere.
+Every step above was one action in `store.js`, one request the server checked
+and recorded, and one screen reading the result — no copying of data anywhere.
 
 ---
 
@@ -1574,8 +1903,9 @@ result, and no copying of data anywhere.
 
 - **Why one store file?** So both halves of the site are the same system.
   Two copies of the data drift apart; one copy cannot.
-- **Why localStorage?** To run with no server during development and demos.
-  It is not for production; the store is the one file to swap.
+- **Why fetch everything in one request?** So every screen reads one
+  consistent copy, and the server decides — in one place — what each person may
+  see. An unchanged answer costs next to nothing (`304`).
 - **Why are statuses, roles and fields in data files?** So adding one is one
   edit, and every screen picks it up. No screen hard-codes a status name.
 - **Why does the review dialog have only one primary button?** It used to
@@ -1589,15 +1919,24 @@ result, and no copying of data anywhere.
   badge already counts it. Two badges for one event, one of which never
   cleared, was worse than one.
 - **Why one admin role?** One office runs this. A second tier only meant a
-  second demo account and a message telling the only admin that "only a Super
+  second admin account and a message telling the only admin that "only a Super
   Admin" could do something. The self-checks (never your own account) are
   what keep the powers safe.
-- **Why is the backend not connected?** It exists so the design has somewhere
-  to go. Wiring it — and syncing its older status list first — is the next
-  big piece of work, and a deliberate decision rather than a default.
+- **Why do some lists exist on both sides?** The website needs them to draw
+  its screens, and the server must not trust the website's copy. Each file
+  names its twin; see section 11 of `SYSTEM-ARCHITECTURE.md`.
 - **Why are the filters in the address bar?** So a filtered view is a link
   you can copy, Back works, and no state has to be threaded through
   components.
+- **Why is the cookie choice not copied to the account when you log in?**
+  A choice made on a shared computer before logging in may be the last
+  visitor's. Only a choice the person makes while signed in is saved to their
+  account.
+- **Why are school details a separate tick, not part of the Terms?** Agreeing
+  to the rules is not agreeing to share more information. Bundling them would
+  make the extra data a condition of having an account.
+- **Why can a person not cancel a request once it is being handled?** Somebody
+  may already have acted on it. Cancelling is for a request nobody has touched.
 - **Why 44px on every button?** It is the smallest control a finger can hit
   reliably (Apple, Google and WCAG all land there). `min-h-[44px]` enforces
   it everywhere.

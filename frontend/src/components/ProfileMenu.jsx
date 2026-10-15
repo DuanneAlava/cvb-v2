@@ -1,21 +1,31 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { CATEGORIES } from '../data/categories.js';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { PERMISSIONS } from '../data/roles.js';
 import { useAuth } from '../context/AuthContext.jsx';
+import { useStore, unreadCountFor } from '../services/store.js';
 import ConfirmDialog from './ConfirmDialog.jsx';
+import { BellIcon, UnreadBadge } from './NotificationBell.jsx';
+import { DASHBOARD_PATH, LOGOUT_PATH, MEGAPHONE_PATHS } from './icons.js';
+import { Avatar } from './admin/ui.jsx';
 
 /*
  * The profile circle at the right-hand end of the navbar, and the panel that
  * drops down when it is pressed.
  *
- * Everything that used to be spread across the navbar now lives in here:
+ * What is in here:
  *
- *   - who is logged in: initials, full name and school email
+ *   - who is logged in: profile photo (or initials), full name and school
+ *     email
+ *   - where to go next: the dashboard, account settings, and - for an
+ *     account that may open it - the admin panel. On a phone, also
+ *     "Notifications", with the unread count (the navbar bell's job from
+ *     `sm` up)
  *   - "Your Suggestions" and "Your Voice Outs", which narrow the board down
  *     to the student's own posts
- *   - the six category shortcuts
  *   - "Log out", which asks for confirmation before it does anything
+ *
+ * The categories are NOT in here. The search box's dropdown offers the same
+ * six, and it is always on screen.
  *
  * The panel closes when the student clicks anywhere else on the page or
  * presses Escape, so it never gets stuck open.
@@ -46,14 +56,25 @@ function ProfileMenu() {
   const menuRef = useRef(null);
 
   const { user, can, logout } = useAuth();
+
+  /*
+   * UNREAD NOTIFICATIONS, FOR PHONES. From `sm` up the navbar has its own
+   * bell (NotificationBell.jsx). On a phone there is no room for it, so the
+   * same count is shown here instead: a badge on the profile circle and a
+   * "Notifications" row in the panel, both hidden from `sm` up so the count
+   * is never shown twice.
+   */
+  const store = useStore();
+  const unread = user ? unreadCountFor(store.db, user) : 0;
   const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
 
   // Which "your posts" view is showing, if any: 'suggestion', 'concern' or
   // null. These are the two kind families from data/workflow.js - a "voice
-  // out" is the student-facing name for a post in the concern family.
-  const activeMine = searchParams.get('mine');
-  const activeCategory = searchParams.get('category');
+  // out" is the student-facing name for a post in the concern family. Only
+  // meaningful on the board itself; on any other page nothing is "active".
+  const activeMine = location.pathname === '/' ? searchParams.get('mine') : null;
 
   // Close the panel on a click outside it, and on Escape.
   useEffect(() => {
@@ -80,39 +101,34 @@ function ProfileMenu() {
   // buttons in this component's place instead.
   if (!user) return null;
 
-  // The filters live below the hero, so bring the results into view rather
-  // than leaving the student looking at an unchanged screen.
-  function scrollToBoard() {
-    document.getElementById('browse-suggestions')?.scrollIntoView({ behavior: 'smooth' });
-  }
-
   /*
-   * Show only this student's posts of one type. The choice goes into the
-   * address bar, the same place the search box writes to, so the board has a
-   * single set of filters to read no matter which control set them.
+   * "YOUR SUGGESTIONS" AND "YOUR VOICE OUTS" ARE LINKS TO THE BOARD.
+   *
+   * They used to be buttons that wrote ?mine=... into the address of
+   * whatever page was open. On the board that filtered the list; on the
+   * dashboard or the account page it produced /student/dashboard?mine=concern
+   * - an address that changed while nothing on screen did, so the item
+   * looked dead. This menu sits in the navbar on every student page, so the
+   * item has to work from every student page.
+   *
+   * A <Link to="/?mine=..."> always lands on the board with the filter set,
+   * wherever it is pressed from. The board itself does the scrolling down to
+   * the results once it is on screen (see pages/Home.jsx), because from
+   * another page there is nothing to scroll to at the moment of the click.
+   * The address bar stays the one place filters live, so the board reads
+   * this exactly as it reads the search box.
    */
-  function showMyPosts(group) {
-    const next = new URLSearchParams();
-    next.set('mine', group);
-    setSearchParams(next);
-    setOpen(false);
-    scrollToBoard();
+  function myPostsLink(group) {
+    return `/?mine=${group}`;
   }
 
-  // Jump to one category, clearing any other filter that was active.
-  function showCategory(slug) {
-    const next = new URLSearchParams();
-    next.set('category', slug);
-    setSearchParams(next);
-    setOpen(false);
-    scrollToBoard();
-  }
-
-  // Only runs once the student has confirmed in the pop-up.
-  function handleLogout() {
-    logout();
+  // Only runs once the student has confirmed in the pop-up. Back to the
+  // board afterwards, with any "your posts" filter cleared - there is no
+  // "you" to filter by any more.
+  async function handleLogout() {
     setConfirmingLogout(false);
     setOpen(false);
+    await logout();
     navigate('/');
   }
 
@@ -125,28 +141,41 @@ function ProfileMenu() {
   return (
     <div className="relative" ref={menuRef}>
       {/* THE PROFILE CIRCLE. `aria-expanded` tells screen readers whether the
-          panel below is currently open. */}
+          panel below is currently open. Below `md` the button is just the
+          circle - 36px inside 4px of padding, a full 44px tap target - and
+          the chevron's 28px go to the greeting and the search box instead. */}
       <button
         type="button"
         onClick={() => setOpen(!open)}
         aria-expanded={open}
         aria-haspopup="menu"
-        aria-label="Open your profile menu"
-        className="flex min-h-[44px] items-center gap-2 rounded-full p-1 pr-2 text-white transition-colors hover:bg-white/10"
+        aria-label={`Open your profile menu${unread ? `, ${unread} unread notifications` : ''}`}
+        className="flex min-h-[44px] items-center gap-2 rounded-full p-1 text-white transition-colors hover:bg-white/10 md:pr-2"
       >
-        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-white/20 text-xs font-bold">
-          {user.initials}
+        {/* The student's profile photo, or their initials until they add
+            one on the account page - with the unread count on it on a
+            phone (see UNREAD NOTIFICATIONS above). */}
+        <span className="relative shrink-0">
+          <Avatar name={user.name} photo={user.photo} size="nav" tone="glass" />
+          <UnreadBadge
+            count={unread}
+            className="absolute -right-1 -top-1 ring-2 ring-navy-600 sm:hidden"
+          />
         </span>
 
         {/* A small chevron so it is obvious this opens something. It turns
-            upside down while the panel is open. */}
+            upside down while the panel is open. From `md` up only: on a
+            phone or small tablet a lone avatar circle is a familiar "tap for
+            your account". */}
         <svg
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
           strokeWidth="2"
           aria-hidden="true"
-          className={open ? 'h-4 w-4 rotate-180 transition-transform' : 'h-4 w-4 transition-transform'}
+          className={
+            'hidden h-4 w-4 transition-transform md:block' + (open ? ' rotate-180' : '')
+          }
         >
           <path d="m6 9 6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
@@ -160,9 +189,7 @@ function ProfileMenu() {
         >
           {/* 1. WHO IS LOGGED IN. `truncate` stops a long email stretching the panel. */}
           <div className="flex items-center gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3">
-            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-navy-600 text-sm font-bold text-white">
-              {user.initials}
-            </span>
+            <Avatar name={user.name} photo={user.photo} size="md" />
             <span className="min-w-0">
               <span className="block truncate font-semibold text-navy-900">{user.name}</span>
               <span className="block truncate text-xs text-slate-500">{user.email}</span>
@@ -189,9 +216,22 @@ function ProfileMenu() {
               className={rowClass + ' text-slate-700 hover:bg-slate-100'}
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true" className="h-4 w-4 text-navy-600">
-                <path d="M4 13h6V4H4v9Zm0 7h6v-5H4v5Zm10 0h6V11h-6v9Zm0-16v5h6V4h-6Z" strokeLinejoin="round" />
+                <path d={DASHBOARD_PATH} strokeLinejoin="round" />
               </svg>
               Your dashboard
+            </Link>
+
+            {/* Phones only - from `sm` up the navbar's bell is the way in. */}
+            <Link
+              to="/student/dashboard#notifications"
+              role="menuitem"
+              aria-label={`Notifications${unread ? `, ${unread} unread` : ''}`}
+              onClick={() => setOpen(false)}
+              className={rowClass + ' text-slate-700 hover:bg-slate-100 sm:hidden'}
+            >
+              <BellIcon className="h-4 w-4 text-navy-600" />
+              Notifications
+              <UnreadBadge count={unread} className="ml-auto" />
             </Link>
 
             <Link
@@ -223,10 +263,10 @@ function ProfileMenu() {
 
           {/* 3. THE STUDENT'S OWN POSTS. */}
           <div className="p-2">
-            <button
-              type="button"
+            <Link
+              to={myPostsLink('suggestion')}
               role="menuitem"
-              onClick={() => showMyPosts('suggestion')}
+              onClick={() => setOpen(false)}
               className={
                 activeMine === 'suggestion'
                   ? rowClass + ' bg-navy-50 font-semibold text-navy-700'
@@ -245,50 +285,38 @@ function ProfileMenu() {
                 <path d="M21 12a8 8 0 0 1-8 8H7l-4 3v-4.6A8 8 0 1 1 21 12Z" strokeLinejoin="round" />
               </svg>
               Your Suggestions
-            </button>
+            </Link>
 
-            <button
-              type="button"
+            <Link
+              to={myPostsLink('concern')}
               role="menuitem"
-              onClick={() => showMyPosts('concern')}
+              onClick={() => setOpen(false)}
               className={
                 activeMine === 'concern'
                   ? rowClass + ' bg-navy-50 font-semibold text-navy-700'
                   : rowClass + ' text-slate-700 hover:bg-slate-100'
               }
             >
-              {/* The same megaphone used on the "Voice Out" button in the hero. */}
+              {/* The hero's "Voice Out" megaphone, with the one sound wave
+                  that reads at this size - see icons.js. */}
               <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className="h-4 w-4 text-navy-600">
-                <path d="M3 10.5v3a1.5 1.5 0 0 0 1.5 1.5H6l3.2 3.7a1 1 0 0 0 1.8-.7V5.5a1 1 0 0 0-1.8-.7L6 8.5H4.5A1.5 1.5 0 0 0 3 10.5Z" />
-                <path d="M14.5 9a1 1 0 0 1 1.4 0 4.3 4.3 0 0 1 0 6 1 1 0 1 1-1.4-1.4 2.3 2.3 0 0 0 0-3.2 1 1 0 0 1 0-1.4Z" />
+                {MEGAPHONE_PATHS.slice(0, 2).map((path) => (
+                  <path key={path} d={path} />
+                ))}
               </svg>
               Your Voice Outs
-            </button>
+            </Link>
           </div>
 
-          {/* 4. THE CATEGORY SHORTCUTS that used to sit across the navbar. */}
-          <div className="border-t border-slate-200 p-2">
-            <p className="px-3 pb-1 pt-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
-              Browse by category
-            </p>
-            {CATEGORIES.map((item) => (
-              <button
-                key={item.slug}
-                type="button"
-                role="menuitem"
-                onClick={() => showCategory(item.slug)}
-                className={
-                  activeCategory === item.slug
-                    ? rowClass + ' bg-navy-50 font-semibold text-navy-700'
-                    : rowClass + ' text-slate-700 hover:bg-slate-100'
-                }
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
+          {/*
+            No "Browse by category" list. The six categories used to be
+            repeated here as a column of buttons, but the dropdown in the
+            search box already offers exactly the same six - and it is always
+            on screen, where this menu is two taps away. The same choice in
+            two places was one too many.
+          */}
 
-          {/* 5. LOG OUT. This only opens the confirmation - it does not log out yet. */}
+          {/* 4. LOG OUT. This only opens the confirmation - it does not log out yet. */}
           <div className="border-t border-slate-200 p-2">
             <button
               type="button"
@@ -304,11 +332,7 @@ function ProfileMenu() {
                 aria-hidden="true"
                 className="h-4 w-4"
               >
-                <path
-                  d="M15 17l5-5-5-5M20 12H9M12 20H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h6"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
+                <path d={LOGOUT_PATH} strokeLinecap="round" strokeLinejoin="round" />
               </svg>
               Log out
             </button>

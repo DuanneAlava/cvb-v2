@@ -1,8 +1,7 @@
 import { useMemo } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { useAuth } from '../../context/AuthContext.jsx';
 import { AUDIT_ACTIONS, auditLabel } from '../../data/workflow.js';
 import { useStore } from '../../services/store.js';
+import { useFilterParams } from '../../hooks/useFilterParams.js';
 import DataTable from '../../components/admin/DataTable.jsx';
 import {
   Avatar,
@@ -13,6 +12,8 @@ import {
   Select,
   TextInput,
   formatDateTime,
+  matchesSearch,
+  plural,
 } from '../../components/admin/ui.jsx';
 
 /*
@@ -20,8 +21,12 @@ import {
  *
  * Every administrative action that changes somebody else's data is recorded -
  * approvals, rejections, assignments, suspensions, role changes, sign-ins.
- * The entries are written inside services/store.js by the actions themselves,
- * not by the screens, so an action cannot quietly skip being logged.
+ * The entries are written by the server as part of the action itself, not by
+ * the screens, so an action cannot quietly skip being logged.
+ *
+ * The page lists the most recent 500 - what arrives with the rest of the
+ * records. Nothing older is lost: the whole log is downloaded from Reports &
+ * Exports.
  *
  * This is what makes the panel accountable rather than merely powerful: if a
  * student asks why their post was rejected, or who suspended their account,
@@ -31,41 +36,34 @@ import {
  * that administrators can edit is not evidence of anything.
  */
 function ActivityLogs() {
-  const { user } = useAuth();
-  const { db } = useStore(user);
+  const { db } = useStore();
 
-  const [searchParams, setSearchParams] = useSearchParams();
+  // Filters live in the address bar - see hooks/useFilterParams.js.
+  const { searchParams, setFilter } = useFilterParams();
   const query = searchParams.get('q') ?? '';
   const action = searchParams.get('action') ?? '';
   const adminId = searchParams.get('admin') ?? '';
 
-  function setFilter(key, value) {
-    const next = new URLSearchParams(searchParams);
-    if (value) next.set(key, value);
-    else next.delete(key);
-    setSearchParams(next, { replace: true });
-  }
-
   const rows = useMemo(() => {
-    const search = query.trim().toLowerCase();
-
     return db.audit.filter((entry) => {
       if (action && entry.action !== action) return false;
       if (adminId && entry.adminId !== adminId) return false;
 
-      if (!search) return true;
-      return [entry.adminName, entry.details, entry.targetId, auditLabel(entry.action)]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase()
-        .includes(search);
+      return matchesSearch(
+        [entry.adminName, entry.details, entry.targetId, auditLabel(entry.action)],
+        query
+      );
     });
   }, [db.audit, query, action, adminId]);
 
   // Only administrators who have actually done something appear in the filter.
+  // An entry from the server's make-admin command has no account behind it,
+  // so it is not an administrator anybody can filter by.
   const admins = useMemo(() => {
     const seen = new Map();
-    db.audit.forEach((entry) => seen.set(entry.adminId, entry.adminName));
+    db.audit.forEach((entry) => {
+      if (entry.adminId) seen.set(entry.adminId, entry.adminName);
+    });
     return [...seen.entries()].map(([id, name]) => ({ value: id, label: name }));
   }, [db.audit]);
 
@@ -128,10 +126,10 @@ function ActivityLogs() {
     <>
       <PageHeader
         title="Activity Logs"
-        description="A read-only record of every administrative action, newest first."
+        description="A read-only record of every administrative action, newest first. The latest 500 are listed here; download the whole log from Reports & Exports."
       />
 
-      <Panel title={`${rows.length} ${rows.length === 1 ? 'entry' : 'entries'}`}>
+      <Panel title={plural(rows.length, 'entry', 'entries')}>
         <div className="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
           <div className="lg:col-span-2">
             <TextInput

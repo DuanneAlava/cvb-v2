@@ -1,6 +1,6 @@
 import { labelForSlug } from '../data/categories.js';
 import { departmentLabel, kindInfo, statusInfo } from '../data/workflow.js';
-import { findUser, voteCount } from './store.js';
+import { findUser } from './store.js';
 
 /*
  * CSV BUILDING, IN ONE PLACE.
@@ -12,9 +12,18 @@ import { findUser, voteCount } from './store.js';
  * or a spreadsheet built on one breaks when somebody sends the other.
  */
 
-// Wrap a value for CSV: quote it, and double any quotes inside.
+/*
+ * Wrap a value for CSV: quote it, and double any quotes inside.
+ *
+ * FORMULA INJECTION. A spreadsheet treats a cell starting with = + - or @ as
+ * a formula and runs it - and a submission's title is typed by anybody. A
+ * title like =HYPERLINK("http://...") would turn into a live link, or worse,
+ * the moment an administrator opened the export. A leading apostrophe makes
+ * the spreadsheet show the text exactly as typed instead of running it.
+ */
 function csvCell(value) {
-  const text = String(value ?? '');
+  let text = String(value ?? '');
+  if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`;
   return `"${text.replace(/"/g, '""')}"`;
 }
 
@@ -23,16 +32,32 @@ export function toCsv(headers, rows) {
 }
 
 /*
- * Hand the file to the browser.
+ * A date for a spreadsheet: "2026-10-13 14:05", in this computer's own time
+ * zone - the same time the screens show - rather than the server's
+ * "2026-10-13T06:05:00.000Z", which is UTC and which a spreadsheet does not
+ * read as a date. Written year first, so the column still sorts correctly.
+ */
+export function csvDate(iso) {
+  if (!iso) return '';
+  const date = new Date(iso);
+  const two = (number) => String(number).padStart(2, '0');
+  return (
+    `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())} ` +
+    `${two(date.getHours())}:${two(date.getMinutes())}`
+  );
+}
+
+/*
+ * Hand a file to the browser to save - a CSV from the export pages, or a
+ * person's data download (components/PrivacyData.jsx).
  *
  * A Blob and an object URL rather than a data: URI, because a data: URI of a
  * few thousand rows runs into URL length limits in some browsers. The URL is
- * revoked afterwards so the blob is not held in memory for the session.
+ * let go of a moment later rather than straight away - some browsers,
+ * Safari among them, are still starting the download when the click returns,
+ * and would find nothing there.
  */
-export function downloadCsv(filename, csv) {
-  // The BOM is what makes Excel open a UTF-8 CSV correctly instead of
-  // mangling any accented character in it.
-  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+export function saveFile(filename, blob) {
   const url = URL.createObjectURL(blob);
 
   const link = document.createElement('a');
@@ -42,12 +67,18 @@ export function downloadCsv(filename, csv) {
   link.click();
   link.remove();
 
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+export function downloadCsv(filename, csv) {
+  // The BOM is what makes Excel open a UTF-8 CSV correctly instead of
+  // mangling any accented character in it.
+  saveFile(filename, new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' }));
 }
 
 // Today's date, for the filename.
 export function stamp() {
-  return new Date().toISOString().slice(0, 10);
+  return csvDate(new Date().toISOString()).slice(0, 10);
 }
 
 /*
@@ -81,11 +112,11 @@ export function submissionRow(db, post, includeIdentity = false) {
     labelForSlug(post.category),
     statusInfo(post.status).label,
     post.department ? departmentLabel(post.department) : '',
-    voteCount(db, post.id),
+    post.votes,
     post.anonymous ? 'Yes' : 'No',
-    post.createdAt,
-    post.resolvedAt ?? '',
-    post.resolution ?? '',
+    csvDate(post.createdAt),
+    csvDate(post.resolvedAt),
+    post.resolution,
     ...(includeIdentity
       ? [author?.name ?? 'Deleted account', author?.studentId ?? '', author?.email ?? '']
       : []),

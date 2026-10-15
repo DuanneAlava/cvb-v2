@@ -1,10 +1,9 @@
 import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../../context/AuthContext.jsx';
 import { DEPARTMENTS, CLOSED_STATUSES, OPEN_STATUSES } from '../../data/workflow.js';
-import { useStore, needsAssigning, platformStats } from '../../services/store.js';
+import { useStore, needsAssigning, platformStats, averageResolutionDays } from '../../services/store.js';
 import DataTable from '../../components/admin/DataTable.jsx';
-import { PageHeader, Panel } from '../../components/admin/ui.jsx';
+import { PageHeader, Panel, plural } from '../../components/admin/ui.jsx';
 
 /*
  * DEPARTMENTS - who is carrying what.
@@ -27,10 +26,11 @@ import { PageHeader, Panel } from '../../components/admin/ui.jsx';
  *
  * - One row per department, built with `.map` over DEPARTMENTS  Each pass
  *   filters the posts down to that department and works out its numbers.
- * - `.reduce((sum, post) => sum + (...), 0) / timed.length / 86400000`
- *   Add up every post's time-to-resolve in milliseconds, divide by how many
- *   there were (the average), divide by a day's worth of milliseconds
- *   (days).
+ * - `averageResolutionDays(assigned)`  The average days from submission to
+ *   resolution, worked out in services/store.js - the same sum Analytics
+ *   uses for the whole platform, here given one department's posts.
+ * - `86400000`  A day's worth of milliseconds (1000 x 60 x 60 x 24), for
+ *   turning a time difference into days.
  * - `Math.min(...open.map((p) => Date.parse(p.createdAt)))`  The earliest
  *   creation date among the open posts - the one waiting longest.
  * - `null` vs `0`  A department that has never resolved anything has no
@@ -42,8 +42,7 @@ import { PageHeader, Panel } from '../../components/admin/ui.jsx';
  *   oldest-open, in the other direction.
  */
 function Departments() {
-  const { user } = useAuth();
-  const { db } = useStore(user);
+  const { db } = useStore();
   const navigate = useNavigate();
 
   const rows = useMemo(() => {
@@ -59,15 +58,7 @@ function Departments() {
        * that has never closed anything has no average, and printing "0.0d"
        * would read as instant rather than as unknown.
        */
-      const timed = assigned.filter((post) => post.resolvedAt && post.createdAt);
-      const avgDays = timed.length
-        ? timed.reduce(
-            (sum, post) => sum + (Date.parse(post.resolvedAt) - Date.parse(post.createdAt)),
-            0
-          ) /
-          timed.length /
-          86400000
-        : null;
+      const avgDays = averageResolutionDays(assigned);
 
       // The longest-waiting open concern, which is the one most likely to
       // become a complaint about the complaint.
@@ -202,7 +193,7 @@ function Departments() {
       */}
       <Panel
         title="Workload by department"
-        description={`${totals.open} open ${totals.open === 1 ? 'item' : 'items'} across ${DEPARTMENTS.length} departments. Click a row to see everything that department has been given.`}
+        description={`${plural(totals.open, 'open item')} across ${DEPARTMENTS.length} departments. Click a row to see everything that department has been given.`}
       >
         <DataTable
           rows={rows}

@@ -13,6 +13,16 @@
  * identifies the account, so a student changing it is a support request, not
  * a text box; an administrator can correct it.
  *
+ * `required` marks a field that may not be left empty. It is checked in one
+ * place - on the server, by backend/src/models/accountRules.js, which keeps
+ * the same list - so both forms get the same rule, rather than each page
+ * writing its own check (and one forgetting).
+ *
+ * `school` marks the school details. They are optional, and kept only while
+ * the person has agreed to it - on the sign-up form, or later under Privacy &
+ * Data on /account (components/PrivacyData.jsx). The server refuses to save
+ * new ones without that agreement (backend/src/models/accountRules.js).
+ *
  * `type: 'select'` means the value is picked from data/programs.js rather
  * than typed, so one programme cannot end up recorded five different ways.
  *
@@ -26,12 +36,30 @@
  */
 export const ACCOUNT_FIELDS = [
   { key: 'name', label: 'Full name', type: 'text', required: true },
-  { key: 'email', label: 'Email', type: 'email', adminOnly: true },
-  { key: 'studentId', label: 'Student ID', type: 'text' },
-  { key: 'course', label: 'Course / Program', type: 'select' },
-  { key: 'yearLevel', label: 'Year level', type: 'text' },
-  { key: 'section', label: 'Section', type: 'text' },
+  { key: 'email', label: 'Email', type: 'email', adminOnly: true, required: true },
+  { key: 'studentId', label: 'Student ID', type: 'text', school: true },
+  { key: 'course', label: 'Course / Program', type: 'select', school: true },
+  { key: 'yearLevel', label: 'Year level', type: 'text', school: true },
+  { key: 'section', label: 'Section', type: 'text', school: true },
 ];
 
 // What a student may edit on their own account.
 export const STUDENT_EDITABLE_FIELDS = ACCOUNT_FIELDS.filter((field) => !field.adminOnly);
+
+/*
+ * THE PASSWORD RULE, for every place a password is chosen: signing up
+ * (pages/Signup.jsx), changing it (components/ChangePasswordForm.jsx) and
+ * resetting a forgotten one (pages/ResetPassword.jsx). At least 8
+ * characters, with at least one letter and at least one number. The server
+ * applies the same rule (backend/src/models/accountRules.js).
+ */
+export const PASSWORD_PATTERN = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/;
+export const PASSWORD_RULE_MESSAGE = 'Use at least 8 characters, with one letter and one number.';
+
+/*
+ * THE EMAIL RULE, for every place an address is set: signing up, and an
+ * administrator correcting one on a user's profile. Some text, an @, some
+ * text, a dot, then more text - the rough shape of an email address. The
+ * server applies the same rule (backend/src/models/accountRules.js).
+ */
+export const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

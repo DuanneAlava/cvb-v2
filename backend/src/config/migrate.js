@@ -16,7 +16,7 @@ async function migrate() {
 
   console.log('Running schema.sql against', process.env.PGDATABASE || '(no PGDATABASE set)');
   await pool.query(schema);
-  console.log('Migration complete: users, sessions, categories, posts, votes tables are ready.');
+  console.log('Migration complete: every table is ready, with the six categories filled in.');
 
   await pool.end();
 }

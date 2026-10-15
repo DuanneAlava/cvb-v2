@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { CATEGORIES } from '../../data/categories.js';
 import {
@@ -12,6 +11,7 @@ import {
 } from '../../data/workflow.js';
 import { PROGRAMS } from '../../data/programs.js';
 import { useStore, authorLabel, findUser } from '../../services/store.js';
+import { useFilterParams } from '../../hooks/useFilterParams.js';
 import {
   downloadCsv,
   stamp,
@@ -29,6 +29,8 @@ import {
   Select,
   StatusBadge,
   TextInput,
+  matchesSearch,
+  plural,
   timeAgo,
 } from '../../components/admin/ui.jsx';
 
@@ -69,16 +71,17 @@ import {
  * - Props with defaults  `lockedGroup = null` in the parameter list means
  *   "if the route does not pass this, treat it as null". A route that
  *   passes nothing gets All Submissions; the queues pass a lock or two.
- * - Filters in the address bar  useSearchParams, as in SearchBar.jsx. Every
+ * - Filters in the address bar  hooks/useFilterParams.js, as in SearchBar.jsx. Every
  *   dropdown reads its value from the URL and writes back to it, which is
  *   why a filtered view can be copied as a link.
  * - useEffect watching one param  The `highlight` effect re-runs whenever
  *   that param changes, opening the dialog for that submission - needed
  *   because a click on a notification can change the address while this
  *   page is already on screen.
- * - `[a, b, c].filter(Boolean).join(' ')`  Drop the empty/undefined entries
- *   (Boolean(x) is false for them), then glue what is left into one string.
- *   That string is the "haystack" the search box looks in.
+ * - `matchesSearch([a, b, c], query)`  From components/admin/ui.jsx, shared
+ *   by every list with a search box: it drops the empty entries, glues what
+ *   is left into one string, and checks whether what was typed appears in
+ *   it, ignoring capitals.
  * - `new Set(list)`  A collection that keeps each value once. Used to find
  *   which departments actually appear in the records. `[...set]` turns it
  *   back into an array.
@@ -102,12 +105,14 @@ function Submissions({
   queue = false,
 }) {
   const { user } = useAuth();
-  const { db } = useStore(user);
+  const { db } = useStore();
 
   // The filters live in the address bar, so a filtered view can be bookmarked
   // and shared with another administrator - the same approach the student
   // site's search box uses.
-  const [searchParams, setSearchParams] = useSearchParams();
+  // Filters live in the address bar (hooks/useFilterParams.js). Changing one
+  // forgets `highlight`, the submission opened from a link.
+  const { searchParams, setSearchParams, setFilter } = useFilterParams({ alsoClear: ['highlight'] });
 
   const query = searchParams.get('q') ?? '';
   const category = searchParams.get('category') ?? '';
@@ -145,14 +150,6 @@ function Submissions({
     if (highlight) setReviewingId(highlight);
   }, [highlight]);
 
-  function setFilter(key, value) {
-    const next = new URLSearchParams(searchParams);
-    if (value) next.set(key, value);
-    else next.delete(key);
-    next.delete('highlight');
-    setSearchParams(next, { replace: true });
-  }
-
   function clearFilters() {
     setSearchParams({});
   }
@@ -172,8 +169,6 @@ function Submissions({
   }, [db.posts, lockedGroup, lockedKinds, lockedStatuses]);
 
   const rows = useMemo(() => {
-    const search = query.trim().toLowerCase();
-
     return scoped
       .filter((post) => {
         if (category && post.category !== category) return false;
@@ -183,8 +178,6 @@ function Submissions({
         if (department && post.department !== department) return false;
         if (program && findUser(db, post.authorId)?.course !== program) return false;
 
-        if (!search) return true;
-
         /*
          * Searching reaches the author's name, email and student number as
          * well as the post itself, because "find everything this student
@@ -193,19 +186,10 @@ function Submissions({
          * board never shows it.
          */
         const author = findUser(db, post.authorId);
-        const haystack = [
-          post.title,
-          post.message,
-          post.id,
-          author?.name,
-          author?.email,
-          author?.studentId,
-        ]
-          .filter(Boolean)
-          .join(' ')
-          .toLowerCase();
-
-        return haystack.includes(search);
+        return matchesSearch(
+          [post.title, post.message, post.id, author?.name, author?.email, author?.studentId],
+          query
+        );
       })
       .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
   }, [scoped, db, query, category, status, kind, group, department, program]);
@@ -364,7 +348,7 @@ function Submissions({
           header: 'Submitted by',
           hideOn: 'md',
           sortable: true,
-          sortValue: (post) => authorLabel(db, post, user),
+          sortValue: (post) => authorLabel(post, user),
           cell: (post) => {
             const author = findUser(db, post.authorId);
             return (
@@ -441,7 +425,7 @@ function Submissions({
       <PageHeader title={title} description={description} />
 
       <Panel
-        title={`${rows.length} ${rows.length === 1 ? 'submission' : 'submissions'}`}
+        title={plural(rows.length, 'submission')}
         actions={
           <div className="flex flex-wrap items-center gap-2">
             {filtersActive && (
@@ -469,7 +453,7 @@ function Submissions({
               type="button"
               onClick={downloadFiltered}
               disabled={rows.length === 0}
-              title={`Download these ${rows.length} ${rows.length === 1 ? 'row' : 'rows'} as CSV`}
+              title={`Download these ${plural(rows.length, 'row')} as CSV`}
               className="inline-flex items-center gap-1.5 rounded-lg bg-navy-700 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-navy-600 disabled:cursor-not-allowed disabled:bg-slate-300"
             >
               <svg

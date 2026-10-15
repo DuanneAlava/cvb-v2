@@ -1,10 +1,10 @@
 import { useState } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
-import { DEMO_PASSWORD } from '../services/store.js';
 import AuthCard from '../components/AuthCard.jsx';
 import TextField from '../components/TextField.jsx';
 import Button from '../components/Button.jsx';
+import { Notice } from '../components/admin/ui.jsx';
 
 /*
  * The one log-in page for the whole platform.
@@ -17,11 +17,14 @@ import Button from '../components/Button.jsx';
  *     read the account's role
  *            |
  *     admin          --> /admin/dashboard
- *     student / user --> /student/dashboard
+ *     student / user --> /  (the board)
  *
  * A person who was sent here by a route guard is returned to wherever they
  * were heading instead, so a bookmarked admin page still works after signing
  * in - provided their role is allowed there, which the guard checks again.
+ * That forwarding is done by the route itself (RedirectIfSignedIn in
+ * components/RequireAuth.jsx) the moment the account is confirmed, so this
+ * page only has to report a failure.
  *
  * WHAT YOU'LL MEET IN THIS FILE (plain-English notes)
  *
@@ -35,22 +38,21 @@ import Button from '../components/Button.jsx';
  *   code.
  * - `event.preventDefault()`  Stops the form doing a full page reload on
  *   submit, which is the browser's default and would lose our state.
- * - `location.state?.from`  The address the route guard asked us to return
- *   to, if any. The `?.` is "optional chaining": read `.from` only if
+ * - `location.state?.email`  The email the "forgot password" page hands
+ *   back, if any. The `?.` is "optional chaining": read `.email` only if
  *   `state` exists, otherwise give undefined instead of crashing.
- * - `navigate(to, { replace: true })`  Go to an address without leaving the
- *   login page in the Back history.
+ * - `async` / `await`  Checking the password is a request to the server;
+ *   the form waits for the answer, with the button showing it is busy.
  */
 function Login() {
-  const [form, setForm] = useState({ email: '', password: '' });
-  const [error, setError] = useState('');
-
   const { login } = useAuth();
-  const navigate = useNavigate();
   const location = useLocation();
 
-  // Set by the route guard when it turned somebody away.
-  const from = location.state?.from;
+  // The "forgot password" page hands back the email it was using, so it is
+  // not typed a second time.
+  const [form, setForm] = useState({ email: location.state?.email ?? '', password: '' });
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
 
   function handleChange(field) {
     return (event) => {
@@ -59,30 +61,22 @@ function Login() {
     };
   }
 
-  function handleSubmit(event) {
+  async function handleSubmit(event) {
     event.preventDefault();
+    if (busy) return;
 
     if (!form.email.trim() || !form.password) {
       setError('Please fill in both fields.');
       return;
     }
 
-    const result = login({ email: form.email.trim(), password: form.password });
-    if (result.error) {
-      setError(result.error);
-      return;
-    }
+    setBusy(true);
+    const result = await login({ email: form.email.trim(), password: form.password });
+    // On success this page is already on its way out (see the note at the top).
+    if (!result.error) return;
 
-    // `result.home` is the dashboard for the role that just signed in.
-    navigate(from ?? result.home, { replace: true });
-  }
-
-  // Fills the form so the panel can be tried without hunting for a password.
-  // Not "useDemoAccount": a name starting with `use` is a React hook as far as
-  // the linter is concerned, and a hook may not be called from an onClick.
-  function fillDemoAccount(email) {
-    setForm({ email, password: DEMO_PASSWORD });
-    setError('');
+    setBusy(false);
+    setError(result.error);
   }
 
   return (
@@ -124,48 +118,28 @@ function Login() {
           autoComplete="current-password"
         />
 
-        {error && (
-          <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
-            {error}
-          </p>
-        )}
+        {/*
+          A FORGOTTEN PASSWORD is reset with an emailed link
+          (pages/ForgotPassword.jsx); whatever email is typed above goes
+          along. A password you know is changed once signed in, from your
+          own account.
+        */}
+        <div className="-mt-2 flex justify-end">
+          <Link
+            to="/forgot-password"
+            state={{ email: form.email.trim() }}
+            className="inline-flex min-h-[44px] items-center rounded-lg px-2 text-sm font-semibold text-navy-600 hover:bg-navy-50 hover:underline"
+          >
+            Forgot password?
+          </Link>
+        </div>
 
-        <Button type="submit" variant="primary" size="lg" fullWidth>
-          Log in
+        {error && <Notice>{error}</Notice>}
+
+        <Button type="submit" variant="primary" size="lg" fullWidth disabled={busy}>
+          {busy ? 'Logging in…' : 'Log in'}
         </Button>
       </form>
-
-      {/*
-        THE DEMONSTRATION ACCOUNTS.
-        These exist so the platform can be opened and judged without registering
-        first, and they are seeded by services/store.js. Delete this block and
-        those seed accounts before the site is used for real - a log-in page
-        that lists working credentials is exactly as bad as it sounds.
-      */}
-      <div className="mt-6 rounded-lg border border-dashed border-slate-300 bg-slate-50 p-3">
-        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-          Demo accounts
-        </p>
-        <p className="mt-1 text-xs text-slate-500">
-          Password for all of them: <code className="font-mono">{DEMO_PASSWORD}</code>
-        </p>
-
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {[
-            { label: 'Admin', email: 'admin@ollcf.edu.ph' },
-            { label: 'Student', email: 'juan.delacruz@ollcf.edu.ph' },
-          ].map((account) => (
-            <button
-              key={account.email}
-              type="button"
-              onClick={() => fillDemoAccount(account.email)}
-              className="inline-flex min-h-[44px] items-center rounded-full border border-slate-300 bg-white px-4 py-1 text-xs font-medium text-navy-700 transition-colors hover:border-navy-600 hover:bg-navy-50"
-            >
-              {account.label}
-            </button>
-          ))}
-        </div>
-      </div>
     </AuthCard>
   );
 }

@@ -1,13 +1,23 @@
 const express = require('express');
 const authRoutes = require('./authRoutes');
 const suggestionsRoutes = require('./suggestionsRoutes');
+const accountRoutes = require('./accountRoutes');
+const privacyRoutes = require('./privacyRoutes');
 const adminRoutes = require('./adminRoutes');
+const { getState } = require('../controllers/stateController');
+const { attachUserIfPresent } = require('../middleware/auth');
 
 const router = express.Router();
 
 router.get('/health', (req, res) => res.json({ status: 'ok' }));
+
+// Everything the person asking may see - visitors included.
+router.get('/state', attachUserIfPresent, getState);
+
 router.use('/auth', authRoutes);
-router.use('/', suggestionsRoutes); // exposes /categories, /posts, /posts/:id/vote
+router.use('/', suggestionsRoutes); // /posts, /posts/:id/vote, /attachments/:id
+router.use('/', accountRoutes); // /account, /account/photo, /users/:id/photo, /notifications
+router.use('/', privacyRoutes); // /account/terms, consents, /account/export, /privacy-requests
 
 /*
  * The admin API. Everything under /admin is authenticated and permission-

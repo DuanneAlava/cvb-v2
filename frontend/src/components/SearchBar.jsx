@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
 import { CATEGORIES, labelForSlug } from '../data/categories.js';
+import { useFilterParams } from '../hooks/useFilterParams.js';
 
 /*
  * The search box that sits in the navbar, immediately beside the logo.
@@ -19,17 +19,15 @@ import { CATEGORIES, labelForSlug } from '../data/categories.js';
  *
  * - The "query string"  The part of an address after `?`, e.g.
  *   ?category=safety&q=light. Each name=value pair is a "search param".
- * - useSearchParams()  A react-router hook that reads those params and lets
- *   you replace them. It returns the current set and a setter, like useState.
- * - URLSearchParams  The browser's built-in object for a query string, with
- *   .get(name), .set(name, value) and .delete(name).
+ * - useFilterParams()  The shared hook (hooks/useFilterParams.js) that reads
+ *   those params and changes one at a time with setFilter(key, value) - the
+ *   same one the admin lists use.
  * - A "controlled input"  An <input> whose `value` comes from our data and
  *   whose `onChange` writes back to it, so React - not the browser - owns
  *   what the box shows. Both the select and the text box here are controlled
  *   by the address bar.
- * - window.matchMedia('(max-width: 639px)')  Asks the browser "does this CSS
- *   media query match right now?", and can tell us when that changes. It is
- *   how the placeholder knows whether it is on a phone.
+ * - ResizeObserver  Tells us whenever an element changes size. It is how the
+ *   placeholder picks a prompt that fits the field (see below).
  * - `opacity-0` over an icon  A standard trick for restyling a native
  *   <select>: the real control is made invisible but left in place, on top
  *   of the picture we want people to see, so a tap still opens it.
@@ -57,84 +55,99 @@ import { CATEGORIES, labelForSlug } from '../data/categories.js';
  *
  * Nothing in the bar changes size once it is drawn.
  *
- * AN ICON ON A PHONE. The search box now shares one navbar row with the
- * logo and the two auth buttons at every width, which leaves it around
- * 130px on a 360px screen. A dropdown showing a word would take most of
- * that, so below `sm` the dropdown is drawn as a filter icon 44px wide -
+ * AN ICON BELOW `md` (768px). The search box shares one navbar row with the
+ * logo and either the auth buttons or the greeting and profile circle, which
+ * leaves it around 130px on a 360px phone. A dropdown showing a word would
+ * take most of that, so the dropdown is drawn as a filter icon 44px wide -
  * still the real <select>, laid over the icon at zero opacity, so a tap
- * opens the phone's own picker and every label is read at full size there.
+ * opens the device's own picker and every label is read at full size there.
  * A dot on the icon says a category is currently applied. The filter is the
  * secondary control and the search is the primary one, so the field people
  * type in gets the room.
+ *
+ * The icon stays until `md`, not just on phones: from 640px the
+ * "CampusVoiceBox" wordmark returns beside the logo, and a 128px dropdown on
+ * top of it left the field about 15px to type in on a 640px screen.
  */
-const SELECT_WIDTH = 'w-11 sm:w-32'; // an icon on phones, 8rem from `sm` up
+const SELECT_WIDTH = 'w-11 md:w-32'; // an icon below `md`, 8rem from `md` up
 
 /*
- * Whether the navbar is in its phone layout. Used only to shorten the
- * placeholder: "Search suggestions..." is a good prompt in a wide field and a
- * cut-off one in a 90px field. Below `sm` it reads "Search".
+ * THE PLACEHOLDER FITS THE ROOM IT ACTUALLY HAS.
+ *
+ * The search field's width depends on more than the screen: on a phone it
+ * shares the navbar with the school seal, the hexagon, and either the two
+ * auth buttons or the greeting and the profile circle - and the greeting's
+ * width depends on whose first name it shows. So rather than guessing from
+ * the screen size, this measures the field itself and picks the longest
+ * prompt that fits:
+ *
+ *   160px or more    "Search suggestions..."   (needs 140px in the 14px font)
+ *   60px or more     "Search"                  (needs 45px)
+ *   less             nothing - the magnifying glass already says "search",
+ *                    and a word cut off to "Searc" looks broken
+ *
+ * Each cut-off is the words' width plus two allowances:
+ *   about 12px for the clear (x) button Chrome and Safari put in a search
+ *     box. It is hidden while the box is empty but still keeps its space, so
+ *     the placeholder has that much less room than the box's measured width.
+ *     (Measured: with the button hidden, "Search" fits a 55px box; with it,
+ *     the "h" is cut off.) The button stays - it clears a search in one tap.
+ *   a few more pixels, because Android and Windows draw the same words in
+ *     slightly wider system fonts.
+ *
+ * ResizeObserver is the browser's way of being told when an element changes
+ * size, without polling. `contentRect.width` is the width inside the
+ * padding - the actual room for text.
  */
-const PHONE_QUERY = '(max-width: 639px)';
+const FULL_PROMPT = 'Search suggestions...';
+const SHORT_PROMPT = 'Search';
+const FULL_PROMPT_MIN_WIDTH = 160;
+const SHORT_PROMPT_MIN_WIDTH = 60;
 
-function useIsPhone() {
-  const [isPhone, setIsPhone] = useState(
-    () => typeof window !== 'undefined' && window.matchMedia(PHONE_QUERY).matches
-  );
+function useFittingPlaceholder(ref) {
+  const [placeholder, setPlaceholder] = useState(FULL_PROMPT);
 
   useEffect(() => {
-    const media = window.matchMedia(PHONE_QUERY);
-    const update = (event) => setIsPhone(event.matches);
-    media.addEventListener('change', update);
-    return () => media.removeEventListener('change', update);
-  }, []);
+    const element = ref.current;
+    if (!element || typeof ResizeObserver === 'undefined') return undefined;
 
-  return isPhone;
+    const observer = new ResizeObserver(([entry]) => {
+      const room = entry.contentRect.width;
+      setPlaceholder(
+        room >= FULL_PROMPT_MIN_WIDTH ? FULL_PROMPT : room >= SHORT_PROMPT_MIN_WIDTH ? SHORT_PROMPT : ''
+      );
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [ref]);
+
+  return placeholder;
 }
 
 function SearchBar() {
-  const [searchParams, setSearchParams] = useSearchParams();
-  const isPhone = useIsPhone();
+  // Searching or picking a category always shows the whole board, so the
+  // "your posts only" filter from the profile menu (`mine`) is cleared
+  // whenever either changes.
+  const { searchParams, setFilter } = useFilterParams({ alsoClear: ['mine'] });
+  const inputRef = useRef(null);
+  const placeholder = useFittingPlaceholder(inputRef);
 
   const category = searchParams.get('category') ?? ''; // '' means all categories
   const query = searchParams.get('q') ?? '';
-
-  /*
-   * Write one value into the address bar while leaving the others alone.
-   * Passing an empty value removes that part of the address completely, so a
-   * cleared search box does not leave "?q=" trailing behind.
-   *
-   * `replace: true` overwrites the current history entry instead of adding a
-   * new one, so Back does not have to step through every letter typed.
-   */
-  function updateParam(key, value) {
-    const next = new URLSearchParams(searchParams);
-
-    if (value) {
-      next.set(key, value);
-    } else {
-      next.delete(key);
-    }
-
-    // Searching or picking a category always shows the whole board, so the
-    // "your posts only" filter from the profile menu is cleared here.
-    next.delete('mine');
-
-    setSearchParams(next, { replace: true });
-  }
 
   return (
     <div className="flex w-full items-center rounded-lg bg-white shadow-sm ring-1 ring-white/20 focus-within:ring-2 focus-within:ring-mustard">
       {/* THE CATEGORY DROPDOWN on the left, inside the same rounded box. */}
       <div className="relative shrink-0 border-r border-slate-200">
         {/*
-          THE PHONE FACE OF THE DROPDOWN: a filter icon, with a dot when a
-          category is applied. Purely visual - `pointer-events-none` lets the
-          tap through to the <select> laid over it, and it is hidden from
-          `sm` up where the select shows its own text.
+          THE NARROW-SCREEN FACE OF THE DROPDOWN: a filter icon, with a dot
+          when a category is applied. Purely visual - `pointer-events-none`
+          lets the tap through to the <select> laid over it, and it is hidden
+          from `md` up where the select shows its own text.
         */}
         <span
           aria-hidden="true"
-          className="pointer-events-none absolute inset-0 grid place-items-center text-navy-700 sm:hidden"
+          className="pointer-events-none absolute inset-0 grid place-items-center text-navy-700 md:hidden"
         >
           <svg
             viewBox="0 0 24 24"
@@ -154,17 +167,17 @@ function SearchBar() {
 
         <select
           value={category}
-          onChange={(event) => updateParam('category', event.target.value)}
+          onChange={(event) => setFilter('category', event.target.value)}
           aria-label="Filter by category"
           // A label too long for the fixed width is shortened on screen, so the
           // full text is offered here instead of being lost.
           title={category ? labelForSlug(category) : 'All categories'}
           /*
-            `opacity-0` below `sm` hides the select's own rendering behind the
+            `opacity-0` below `md` hides the select's own rendering behind the
             icon while keeping it fully in the page: it is still focusable,
             still announced, and a tap on the icon is a tap on it.
           */
-          className={`${SELECT_WIDTH} min-h-[44px] cursor-pointer truncate rounded-l-lg border-0 bg-transparent py-2.5 pl-3 pr-2 text-sm font-medium text-navy-700 opacity-0 focus:outline-none sm:opacity-100`}
+          className={`${SELECT_WIDTH} min-h-[44px] cursor-pointer truncate rounded-l-lg border-0 bg-transparent py-2.5 pl-3 pr-2 text-sm font-medium text-navy-700 opacity-0 focus:outline-none md:opacity-100`}
         >
           {/* The empty value is what clears the filter and shows every post. */}
           <option value="">All</option>
@@ -197,14 +210,18 @@ function SearchBar() {
         </svg>
 
         <input
+          ref={inputRef}
           type="search"
           value={query}
-          onChange={(event) => updateParam('q', event.target.value)}
-          placeholder={isPhone ? 'Search' : 'Search suggestions...'}
+          onChange={(event) => setFilter('q', event.target.value)}
+          placeholder={placeholder}
           aria-label="Search suggestions"
-          /* Tighter inner padding on a phone: at 360px the field is about
-             90px wide, and 44px of padding left "Search" clipped by a letter. */
-          className="min-h-[44px] w-full rounded-r-lg border-0 bg-transparent py-2.5 pl-7 pr-2 text-sm text-navy-900 placeholder:text-slate-400 focus:outline-none sm:pl-8 sm:pr-3"
+          /* Tighter inner padding until `md`: on a 360px phone, and again
+             at 640px where the wordmark comes back, the field can be under
+             100px wide, and every pixel of padding is one the word "Search"
+             cannot use. 4px on the right is enough - the clear (x) button
+             keeps its own space inside the box anyway. */
+          className="min-h-[44px] w-full rounded-r-lg border-0 bg-transparent py-2.5 pl-7 pr-1 text-sm text-navy-900 placeholder:text-slate-400 focus:outline-none sm:pl-8 md:pr-3"
         />
       </div>
     </div>

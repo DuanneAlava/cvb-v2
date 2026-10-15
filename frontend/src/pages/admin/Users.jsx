@@ -1,8 +1,9 @@
 import { useMemo } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { PERMISSIONS, ROLE_LIST, isAdminRole } from '../../data/roles.js';
 import { useStore, userActivity } from '../../services/store.js';
+import { useFilterParams } from '../../hooks/useFilterParams.js';
 import DataTable from '../../components/admin/DataTable.jsx';
 import {
   AccountStatusBadge,
@@ -13,6 +14,8 @@ import {
   Select,
   TextInput,
   formatDate,
+  matchesSearch,
+  plural,
   timeAgo,
 } from '../../components/admin/ui.jsx';
 
@@ -28,36 +31,27 @@ import {
  * person has actually posted.
  */
 function Users() {
-  const { user, can } = useAuth();
-  const { db } = useStore(user);
+  const { can } = useAuth();
+  const { db } = useStore();
   const navigate = useNavigate();
 
-  const [searchParams, setSearchParams] = useSearchParams();
+  // Filters live in the address bar - see hooks/useFilterParams.js.
+  const { searchParams, setSearchParams, setFilter } = useFilterParams();
   const query = searchParams.get('q') ?? '';
   const role = searchParams.get('role') ?? '';
   const status = searchParams.get('status') ?? '';
 
-  function setFilter(key, value) {
-    const next = new URLSearchParams(searchParams);
-    if (value) next.set(key, value);
-    else next.delete(key);
-    setSearchParams(next, { replace: true });
-  }
-
   const rows = useMemo(() => {
-    const search = query.trim().toLowerCase();
 
     return db.users
       .filter((account) => {
         if (role && account.role !== role) return false;
         if (status && account.status !== status) return false;
 
-        if (!search) return true;
-        return [account.name, account.email, account.studentId, account.course, account.id]
-          .filter(Boolean)
-          .join(' ')
-          .toLowerCase()
-          .includes(search);
+        return matchesSearch(
+          [account.name, account.email, account.studentId, account.course, account.id],
+          query
+        );
       })
       .map((account) => ({ ...account, activity: userActivity(db, account.id) }))
       .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
@@ -70,7 +64,7 @@ function Users() {
       sortable: true,
       cell: (account) => (
         <div className="flex min-w-0 items-center gap-2.5">
-          <Avatar name={account.name} size="sm" />
+          <Avatar name={account.name} photo={account.photo} size="sm" />
           <div className="min-w-0">
             <p className="truncate font-semibold text-navy-900">{account.name}</p>
             <p className="truncate text-xs text-slate-500">{account.email}</p>
@@ -161,11 +155,11 @@ function Users() {
     <>
       <PageHeader
         title="Users"
-        description={`${db.users.length} accounts · ${adminCount} with admin access`}
+        description={`${plural(db.users.length, 'account')} · ${adminCount} with admin access`}
       />
 
       <Panel
-        title={`${rows.length} ${rows.length === 1 ? 'account' : 'accounts'}`}
+        title={plural(rows.length, 'account')}
         actions={
           filtersActive && (
             <button

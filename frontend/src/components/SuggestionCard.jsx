@@ -1,6 +1,7 @@
 import { labelForSlug } from '../data/categories.js';
 import { kindInfo } from '../data/workflow.js';
-import { formatDate } from './admin/ui.jsx';
+import { formatDate, plural } from './admin/ui.jsx';
+import AttachmentList from './AttachmentList.jsx';
 
 /*
  * One post on the board.
@@ -51,7 +52,6 @@ function SuggestionCard({ suggestion, votes, totalVotes = 0, isTopVoted = false,
   const percent = Math.round(share);
 
   const hasMajority = share > 50;
-  const attachments = suggestion.attachments ?? [];
   const kind = kindInfo(suggestion.kind);
 
   return (
@@ -95,43 +95,9 @@ function SuggestionCard({ suggestion, votes, totalVotes = 0, isTopVoted = false,
         {suggestion.message}
       </p>
 
-      {/* THE ATTACHMENTS, if the student added any. */}
-      {attachments.length > 0 && (
-        <ul className="mt-3 flex flex-wrap gap-2">
-          {attachments.map((file, index) => (
-            <li key={index}>
-              {file.type?.startsWith('image/') ? (
-                // A photo, shown as a small square thumbnail. `object-cover`
-                // fills the square without stretching the picture.
-                <img
-                  src={file.dataUrl}
-                  alt={file.name}
-                  className="h-20 w-20 rounded-lg border border-slate-200 object-cover"
-                />
-              ) : (
-                // Anything that is not a photo is listed by name instead,
-                // because there is nothing useful to show as a preview.
-                <span className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-xs text-slate-600">
-                  <svg
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    aria-hidden="true"
-                    className="h-4 w-4 shrink-0 text-slate-400"
-                  >
-                    <path
-                      d="M14 3v5h5M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Z"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                  <span className="max-w-[10rem] truncate">{file.name}</span>
-                </span>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
+      {/* THE ATTACHMENTS, if the student added any - each one opens in a
+          new tab (components/AttachmentList.jsx). */}
+      <AttachmentList files={suggestion.attachments} className="mt-3" />
 
       <p className="mt-3 text-xs text-slate-400">Posted by {suggestion.author}</p>
 
@@ -147,7 +113,7 @@ function SuggestionCard({ suggestion, votes, totalVotes = 0, isTopVoted = false,
             {/* The raw count. This is the number that matters, so it leads and
                 is never abbreviated or capped. */}
             <span className="font-semibold text-navy-900">
-              {votes} {votes === 1 ? 'vote' : 'votes'}
+              {plural(votes, 'vote')}
             </span>
 
             {/* The front-runner, marked so the leader is obvious without
@@ -181,7 +147,7 @@ function SuggestionCard({ suggestion, votes, totalVotes = 0, isTopVoted = false,
             aria-valuetext={
               totalVotes === 0
                 ? 'No votes cast yet'
-                : `${votes} votes, ${percent} percent of all votes on the board`
+                : `${plural(votes, 'vote')}, ${percent} percent of all votes on the board`
             }
             className="mt-1 h-2 w-full overflow-hidden rounded-full bg-slate-200"
           >
@@ -189,7 +155,8 @@ function SuggestionCard({ suggestion, votes, totalVotes = 0, isTopVoted = false,
               The width is set from JavaScript because it changes with every
               vote anywhere on the board, which Tailwind cannot know ahead of
               time. `transition-all` makes it slide to its new width when a
-              vote lands, including votes cast in another tab.
+              vote lands, including votes other students cast, which arrive
+              with the next refresh from the server.
             */}
             <div
               style={{ width: `${share}%` }}

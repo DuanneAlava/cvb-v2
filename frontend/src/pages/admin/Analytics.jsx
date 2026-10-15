@@ -1,11 +1,10 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { useAuth } from '../../context/AuthContext.jsx';
 import { CATEGORIES } from '../../data/categories.js';
 import { KIND_LIST, STATUS_LIST } from '../../data/workflow.js';
 import { useStore, platformStats, averageResolutionDays } from '../../services/store.js';
 import { BarChart } from '../../components/admin/Charts.jsx';
-import { PageHeader, Panel, StatCard } from '../../components/admin/ui.jsx';
+import { PageHeader, Panel, StatCard, plural } from '../../components/admin/ui.jsx';
 
 /*
  * ANALYTICS: HOW BIG, AND HOW WELL.
@@ -59,11 +58,10 @@ import { PageHeader, Panel, StatCard } from '../../components/admin/ui.jsx';
  * - `avgResolution.toFixed(1)`  Print a number with one decimal place.
  */
 function Analytics() {
-  const { user } = useAuth();
-  const { db } = useStore(user);
+  const { db } = useStore();
 
   const stats = useMemo(() => platformStats(db), [db]);
-  const avgResolution = useMemo(() => averageResolutionDays(db), [db]);
+  const avgResolution = useMemo(() => averageResolutionDays(db.posts), [db.posts]);
 
   // Which parts of campus generate the most submissions - busiest first.
   const byCategory = useMemo(
@@ -126,7 +124,7 @@ function Analytics() {
         <StatCard
           label="Registered Users"
           value={stats.totalUsers}
-          hint={`${stats.totalStudents} students`}
+          hint={plural(stats.totalStudents, 'student')}
           to="/admin/users"
         />
         <StatCard label="Active Users" value={stats.activeUsers} hint="Signed in within 30 days" tone="good" />
@@ -147,7 +145,7 @@ function Analytics() {
         <StatCard
           label="Total Submissions"
           value={stats.totalPosts}
-          hint={`${stats.totalSuggestions} suggestions · ${stats.totalConcerns} concerns`}
+          hint={`${plural(stats.totalSuggestions, 'suggestion')} · ${plural(stats.totalConcerns, 'concern')}`}
           to="/admin/posts"
         />
         <StatCard

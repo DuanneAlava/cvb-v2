@@ -1,6 +1,9 @@
-import { createContext, useCallback, useContext, useMemo, useState } from 'react';
-import { useStore, readSessionId, writeSessionId, initialsOf } from '../services/store.js';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { useStore, useConnection, findUser } from '../services/store.js';
 import { PERMISSIONS, can as roleCan, homeFor } from '../data/roles.js';
+import { forgetWave } from '../services/greeting.js';
+import { hideSplash } from '../services/splash.js';
+import ServerUnavailable from '../components/ServerUnavailable.jsx';
 
 /*
  * ONE ACCOUNT SYSTEM FOR THE WHOLE PLATFORM.
@@ -10,22 +13,24 @@ import { PERMISSIONS, can as roleCan, homeFor } from '../data/roles.js';
  *
  *     LOGIN
  *       |
- *     check email + password
+ *     check email + password  (on the server)
  *       |
  *     read the account's role
  *       |
  *       +-- admin     --> /admin/dashboard
- *       +-- student   --> /student/dashboard
- *       +-- user      --> /student/dashboard
+ *       +-- student   --> /            (the board)
+ *       +-- user      --> /            (the board)
  *       +-- no match  --> stay on /login with an error
  *
  * Building it this way is what keeps the two halves of the site synchronised.
  * A second, separate admin login would mean a second list of accounts, and the
  * moment those two lists disagree the admin panel stops describing reality.
  *
- * The account record itself lives in services/store.js alongside the posts, so
- * "who wrote this" is a real link between two records rather than a name
- * copied onto a post.
+ * WHO IS SIGNED IN is whatever the server says: the copy of the records in
+ * services/store.js carries the signed-in account (`viewerId`) along with
+ * everything else, re-read every few seconds. So an admin suspending
+ * somebody, changing their role or resetting their password takes effect for
+ * that person straight away, without them signing out and back in.
  *
  * WHAT YOU'LL MEET IN THIS FILE (plain-English notes)
  *
@@ -39,92 +44,79 @@ import { PERMISSIONS, can as roleCan, homeFor } from '../data/roles.js';
  *   owns the signed-in state.
  * - useAuth()  A custom hook - a small function starting with `use` - that
  *   wraps useContext so a screen can write `const { user, can } = useAuth()`.
- * - `const { password, ...safe } = found`  Destructuring with a "rest"
- *   pattern: pull `password` out on its own, and gather every OTHER property
- *   into a new object called `safe`. It is how the password is left behind.
- * - useCallback / useMemo  Keep a function or value the same between
- *   re-draws unless its inputs change, so components that receive it do not
- *   think something changed when nothing did.
+ * - useMemo  Keep a value the same between re-draws unless its inputs
+ *   change, so components that receive it do not think something changed
+ *   when nothing did.
  */
 
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
-  /*
-   * Only the id of the signed-in account is held here. The account itself is
-   * looked up from the store on every render, so an admin editing somebody's
-   * role or suspending them takes effect for that person immediately, without
-   * them having to sign out and back in.
-   */
-  const [sessionId, setSessionId] = useState(readSessionId);
+  const store = useStore();
+  const connection = useConnection();
 
-  // `null` as the actor: nobody is performing these actions until they are
-  // signed in, and logging in records itself explicitly.
-  const store = useStore(null);
-
-  const user = useMemo(() => {
-    const found = store.db.users.find((candidate) => candidate.id === sessionId);
-    if (!found) return null;
-
-    // Never let the password out of the store and into the rest of the app.
-    const { password, ...safe } = found;
-    return { ...safe, initials: initialsOf(found.name) };
-  }, [store.db.users, sessionId]);
+  const user = useMemo(() => findUser(store.db, store.db.viewerId), [store.db]);
 
   /*
-   * Both of these return { error } when they fail and { user, home } when they
-   * work. `home` matters: the page that called them has to redirect straight
-   * away, and the `user` in this context will not have updated until the next
-   * render, so the destination is handed back rather than read afterwards.
+   * Whether the last person here signed out ON PURPOSE. The route guards
+   * read it: a page that needs an account sends somebody who just pressed
+   * "Log out" to the board, but somebody whose session ended by itself (a
+   * password reset, an expired sign-in) to the log-in page, with a note of
+   * where they were.
    */
-  function startSession(account) {
-    writeSessionId(account.id);
-    setSessionId(account.id);
-    store.recordLogin(account);
-    return { user: account, home: homeFor(account) };
-  }
+  const [signedOut, setSignedOut] = useState(false);
 
-  const signup = useCallback(
-    (details) => {
-      const result = store.register(details);
-      if (result.error) return { error: result.error };
-      return startSession(result.user);
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [store]
-  );
+  /*
+   * THE LOADING SCREEN stays up until the server has answered once, so the
+   * first thing drawn already knows who is signed in. Without that wait,
+   * reloading an admin page would flash the log-in page - the guards would
+   * see "nobody" for the moment before the answer arrived.
+   */
+  useEffect(() => {
+    if (connection !== 'loading') hideSplash();
+  }, [connection]);
 
-  const login = useCallback(
-    (credentials) => {
-      const result = store.authenticate(credentials);
-      if (result.error) return { error: result.error };
-      return startSession(result.user);
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [store]
-  );
+  const value = useMemo(() => {
+    /*
+     * Signing up and logging in answer `{ error }` when they fail and `{}`
+     * when they work. Nothing needs sending anywhere afterwards: once `user` is
+     * set, the /login and /signup routes forward the person to where they
+     * belong (RedirectIfSignedIn in components/RequireAuth.jsx).
+     */
+    async function startSession(attempt) {
+      const result = await attempt;
+      if (!result.error) setSignedOut(false);
+      return result;
+    }
 
-  const logout = useCallback(() => {
-    if (user) store.recordLogout(user);
-    writeSessionId(null);
-    setSessionId(null);
-  }, [store, user]);
-
-  const value = useMemo(
-    () => ({
+    return {
       user,
-      signup,
-      login,
-      logout,
+      signedOut,
+
+      signup: (details) => startSession(store.register(details)),
+      login: (credentials) => startSession(store.authenticate(credentials)),
+
+      // No redirect needed afterwards either: the guards send somebody who
+      // signed out on purpose to the board (see `signedOut` above).
+      logout: async () => {
+        setSignedOut(true);
+        // So the navbar greeting waves at whoever signs in next on this tab.
+        forgetWave();
+        await store.signOut();
+      },
 
       // The one question every guard and every button asks.
       can: (permission) => roleCan(user, permission),
 
       // Where this account belongs, used after logging in and by the guards.
       home: homeFor(user),
-    }),
-    [user, signup, login, logout]
-  );
+    };
+    // The store's actions never change; `user` and `signedOut` are what do.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, signedOut]);
+
+  if (connection === 'loading') return null;
+  if (connection === 'unreachable') return <ServerUnavailable />;
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

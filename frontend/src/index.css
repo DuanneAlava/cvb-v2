@@ -23,12 +23,9 @@ code {
  */
 .reveal-delay-1 { animation-delay: 0.05s; }
 .reveal-delay-2 { animation-delay: 0.15s; }
-.reveal-delay-3 { animation-delay: 0.25s; }
-.reveal-delay-4 { animation-delay: 0.35s; }
 
 /* Respect users who have asked their OS to reduce motion. */
 @media (prefers-reduced-motion: reduce) {
-  .animate-fade-in,
   .animate-fade-in-up,
   .animate-fade-up {
     animation: none !important;

@@ -50,27 +50,32 @@ import { PERMISSIONS, homeFor } from '../data/roles.js';
  *   closing tags. RedirectIfSignedIn either renders them or redirects.
  */
 
+/*
+ * Where somebody with no account goes from a page that needs one. Usually the
+ * log-in page, with `state.from` - which is what lets /login send them
+ * onwards afterwards. But somebody who just pressed "Log out" goes to the
+ * board instead: they are leaving, not trying to get in.
+ */
+function SignInFirst() {
+  const { signedOut } = useAuth();
+  const location = useLocation();
+
+  if (signedOut) return <Navigate to="/" replace />;
+  return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
+}
+
 /* Signed in as anybody. */
 export function RequireAuth() {
   const { user } = useAuth();
-  const location = useLocation();
-
-  if (!user) {
-    // `state.from` is what lets /login send them onwards afterwards.
-    return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
-  }
-
+  if (!user) return <SignInFirst />;
   return <Outlet />;
 }
 
 /* Signed in AND holding a particular permission. */
 export function RequirePermission({ permission }) {
   const { user, can } = useAuth();
-  const location = useLocation();
 
-  if (!user) {
-    return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
-  }
+  if (!user) return <SignInFirst />;
 
   /*
    * Somebody signed in but not allowed here is sent to their own dashboard
@@ -86,37 +91,35 @@ export function RequirePermission({ permission }) {
 
 /*
  * The opposite: for /login and /signup, which a signed-in person has no reason
- * to see. It sends them to whichever dashboard their role belongs to.
+ * to see. It sends them on - to the page a guard turned them away from, if
+ * one did (`state.from`, set above), otherwise to wherever their role
+ * belongs.
+ *
+ * This is also what moves somebody on after they log in or sign up: the
+ * moment the server confirms the account, `user` is set and this sends them
+ * where they were going. The two forms do not redirect by themselves.
  */
 export function RedirectIfSignedIn({ children }) {
   const { user } = useAuth();
-  if (user) return <Navigate to={homeFor(user)} replace />;
+  const location = useLocation();
+  if (user) return <Navigate to={location.state?.from ?? homeFor(user)} replace />;
   return children;
 }
 
 /*
- * THE BOARD IS NOT AN ADMINISTRATOR'S HOME.
+ * A PAGE WHOSE ADMIN VERSION LIVES IN THE ADMIN PANEL.
  *
- * Signing in already sends an admin to /admin/dashboard, but the address "/"
- * was still the public board for everybody - so opening the site, clicking
- * the logo, or reloading a bookmark dropped a moderator onto the student
- * feed and left them to find their way back.
- *
- * This sends anyone who can open the admin panel to it. It is a redirect,
- * not a permission: nothing here decides what an admin may see, only where
- * they land by default. A student or a signed-out visitor is unaffected and
- * gets the board exactly as before.
- *
- * `to` names the admin-side equivalent of the wrapped page, when there is
- * one: /account forwards to /admin/profile rather than to the dashboard, so
- * an admin who asks for their account gets their account. Without it, the
- * admin's home.
+ * An administrator's own account page is their entry in the admin panel, so
+ * /account sends anyone who can open the panel to `to` (/admin/profile). It
+ * is a redirect, not a permission: nothing here decides what an admin may
+ * see, only where that page is for them. A student is unaffected. The board
+ * itself is open to administrators like everybody else.
  */
 export function AdminHomeRedirect({ to, children }) {
   const { user, can } = useAuth();
 
   if (user && can(PERMISSIONS.VIEW_ADMIN)) {
-    return <Navigate to={to ?? homeFor(user)} replace />;
+    return <Navigate to={to} replace />;
   }
 
   return children;

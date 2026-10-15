@@ -9,8 +9,8 @@ import { Badge, EmptyState, PageHeader, Panel, Select, timeAgo } from '../../com
 /*
  * The notification centre.
  *
- * Notifications are written by services/store.js as part of the action that
- * caused them, so this page only reads. That is what stops the familiar bug
+ * Notifications are written by the server as part of the action that caused
+ * them, so this page only reads them - and marks them read. That is what stops the familiar bug
  * where a status changes but nobody is told, because the notification was a
  * second step somebody forgot to call.
  *
@@ -42,7 +42,7 @@ import { Badge, EmptyState, PageHeader, Panel, Select, timeAgo } from '../../com
  */
 function Notifications() {
   const { user } = useAuth();
-  const store = useStore(user);
+  const store = useStore();
   const [filter, setFilter] = useState('all');
 
   const all = useMemo(() => notificationsFor(store.db, user), [store.db, user]);
@@ -92,7 +92,7 @@ function Notifications() {
         </div>
 
         {unreadCount > 0 && (
-          <Button variant="ghost" size="sm" onClick={() => store.markAllNotificationsRead(user)}>
+          <Button variant="ghost" size="sm" onClick={() => store.markAllNotificationsRead()}>
             Mark all as read
           </Button>
         )}

@@ -1,7 +1,10 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { statusInfo, kindInfo } from '../../data/workflow.js';
 import { roleInfo } from '../../data/roles.js';
 import { labelForSlug } from '../../data/categories.js';
+import { initialsOf } from '../../services/store.js';
+import { useApiFile } from '../../hooks/useApiFile.js';
 
 /*
  * The small building blocks the admin panel is assembled from.
@@ -99,9 +102,10 @@ export function StatCard({ label, value, hint, tone = 'default', to }) {
  * PANEL - the standard white card everything sits inside
  * ------------------------------------------------------------------ */
 
-export function Panel({ title, description, actions, children, className = '' }) {
+// `id` makes the panel something a link can jump to, e.g. #notifications.
+export function Panel({ id, title, description, actions, children, className = '' }) {
   return (
-    <section className={`rounded-xl border border-slate-200 bg-white shadow-sm ${className}`}>
+    <section id={id} className={`rounded-xl border border-slate-200 bg-white shadow-sm ${className}`}>
       {(title || actions) && (
         <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 sm:px-5">
           <div className="min-w-0">
@@ -143,6 +147,35 @@ export function EmptyState({ title, message, children }) {
       {message && <p className="mx-auto mt-1 max-w-md text-sm text-slate-500">{message}</p>}
       {children && <div className="mt-4 flex justify-center gap-2">{children}</div>}
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * NOTICE - a message box: red when something went wrong, green when it worked
+ *
+ * One component for every such box on the student site, the log-in pages and
+ * the admin panel, so they all look alike. A message that appears because of
+ * something the person just did is read out by screen readers the moment it
+ * appears - role="alert" for an error, role="status" for a confirmation. A
+ * box that is simply part of the page (the suspended-account banner, a
+ * rejection reason under a post) passes `announce={false}`, so it is not read
+ * out as news every time the page draws.
+ * ------------------------------------------------------------------ */
+
+const NOTICE_TONES = {
+  error: { role: 'alert', colours: 'bg-red-50 text-red-700' },
+  success: { role: 'status', colours: 'bg-emerald-50 text-emerald-800' },
+};
+
+export function Notice({ tone = 'error', announce = true, className = '', children }) {
+  const { role, colours } = NOTICE_TONES[tone];
+  return (
+    <p
+      role={announce ? role : undefined}
+      className={`rounded-lg px-3 py-2 text-sm ${colours} ${className}`}
+    >
+      {children}
+    </p>
   );
 }
 
@@ -213,30 +246,63 @@ export function DetailList({ items }) {
 }
 
 /* ------------------------------------------------------------------ *
- * AVATAR - initials in a circle, the same one the student navbar uses
+ * AVATAR - the person's profile photo in a circle, or their initials
+ *
+ * One component for every circle that stands for an account: the student
+ * navbar, the profile menu, the account page and the admin panel's lists.
+ *
+ * `photo` is the address of the picture a student uploaded on their account
+ * page, as the server sends it on the account ('' for none). The picture is
+ * fetched with the signed-in person's token (hooks/useApiFile.js) - only the
+ * account itself and staff may see it. With no photo, while it is on its
+ * way, or if it fails to load, the circle shows the initials, so a broken
+ * picture never leaves an empty hole. The initials come from initialsOf in
+ * services/store.js - the one place "Juan Dela Cruz" becomes "JD".
+ *
+ * `tone="glass"` is the see-through circle that sits on the navy navbar;
+ * the default is the solid navy circle used on white.
+ *
+ * It is decoration: the name is always written beside it or carried by the
+ * button it sits in, so it is hidden from screen readers.
  * ------------------------------------------------------------------ */
 
-export function Avatar({ name, size = 'md', className = '' }) {
+export function Avatar({ name, photo, size = 'md', tone = 'solid', className = '' }) {
   const sizes = {
     sm: 'h-8 w-8 text-xs',
+    nav: 'h-9 w-9 text-xs',
     md: 'h-10 w-10 text-sm',
     lg: 'h-16 w-16 text-xl',
+    xl: 'h-24 w-24 text-3xl',
+  };
+  const tones = {
+    solid: 'bg-navy-600',
+    glass: 'bg-white/20',
   };
 
-  const initials =
-    (name ?? '')
-      .trim()
-      .split(/\s+/)
-      .slice(0, 2)
-      .map((word) => word[0]?.toUpperCase() ?? '')
-      .join('') || '?';
+  const { url } = useApiFile(photo || null);
+
+  // The picture that last failed to draw, if any. Remembering WHICH one
+  // failed means a newly uploaded photo is tried again rather than skipped.
+  const [failedUrl, setFailedUrl] = useState(null);
+
+  if (url && url !== failedUrl) {
+    return (
+      <img
+        src={url}
+        alt=""
+        aria-hidden="true"
+        onError={() => setFailedUrl(url)}
+        className={`shrink-0 rounded-full object-cover ${tones[tone]} ${sizes[size]} ${className}`}
+      />
+    );
+  }
 
   return (
     <span
       aria-hidden="true"
-      className={`grid shrink-0 place-items-center rounded-full bg-navy-600 font-bold text-white ${sizes[size]} ${className}`}
+      className={`grid shrink-0 place-items-center rounded-full font-bold text-white ${tones[tone]} ${sizes[size]} ${className}`}
     >
-      {initials}
+      {initialsOf(name ?? '')}
     </span>
   );
 }
@@ -279,15 +345,33 @@ export function timeAgo(iso) {
     { limit: 86400, divisor: 3600, unit: 'hour' },
     { limit: 2592000, divisor: 86400, unit: 'day' },
     { limit: 31536000, divisor: 2592000, unit: 'month' },
+    { limit: Infinity, divisor: 31536000, unit: 'year' },
   ];
 
-  for (const step of steps) {
-    if (seconds < step.limit) {
-      const count = Math.floor(seconds / step.divisor);
-      return `${count} ${step.unit}${count === 1 ? '' : 's'} ago`;
-    }
-  }
+  // The first step the age fits under - "year" takes everything older.
+  const step = steps.find((candidate) => seconds < candidate.limit);
+  return `${plural(Math.floor(seconds / step.divisor), step.unit)} ago`;
+}
 
-  const years = Math.floor(seconds / 31536000);
-  return `${years} year${years === 1 ? '' : 's'} ago`;
+/* ------------------------------------------------------------------ *
+ * COUNTS AND SEARCHING
+ * ------------------------------------------------------------------ */
+
+// "1 row", "3 rows" - a count with its word, singular or plural, so no page
+// writes "1 rows". Pass the plural when it is not just an added "s":
+// plural(2, 'entry', 'entries').
+export function plural(count, singular, pluralForm = `${singular}s`) {
+  return `${count} ${count === 1 ? singular : pluralForm}`;
+}
+
+/*
+ * THE SEARCH BOX'S MATCH, for every list that has one - the board, Users,
+ * All Submissions, Activity Logs: does any of these values contain what was
+ * typed, ignoring capitals? Empty values are skipped, and an empty search
+ * matches everything.
+ */
+export function matchesSearch(values, query) {
+  const search = query.trim().toLowerCase();
+  if (!search) return true;
+  return values.filter(Boolean).join(' ').toLowerCase().includes(search);
 }

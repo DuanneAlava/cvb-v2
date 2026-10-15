@@ -25,7 +25,7 @@
  * added here without a matching college degrades to "no suggestion" instead
  * of silently assigning work to the wrong office.
  */
-export const PROGRAMS_BY_COLLEGE = {
+const PROGRAMS_BY_COLLEGE = {
   'college-education': [
     'BS in Secondary Education major in Filipino',
     'BS in Secondary Education major in Science',

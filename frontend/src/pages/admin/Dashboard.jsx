@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { labelForSlug } from '../../data/categories.js';
-import { AWAITING_REVIEW, OPEN_STATUSES, departmentLabel, kindInfo } from '../../data/workflow.js';
+import { AWAITING_REVIEW, departmentLabel, isOpenWork } from '../../data/workflow.js';
 import { useStore, platformStats, findUser } from '../../services/store.js';
 import {
   Avatar,
@@ -55,7 +55,7 @@ import {
  */
 function Dashboard() {
   const { user } = useAuth();
-  const { db } = useStore(user);
+  const { db } = useStore();
 
   const stats = useMemo(() => platformStats(db), [db]);
 
@@ -73,7 +73,7 @@ function Dashboard() {
   const openWork = useMemo(
     () =>
       db.posts
-        .filter((post) => kindInfo(post.kind).needsAssignment && OPEN_STATUSES.includes(post.status))
+        .filter(isOpenWork)
         .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt)),
     [db.posts]
   );
@@ -170,7 +170,7 @@ function Dashboard() {
                       to={`/admin/queue/pending?highlight=${post.id}`}
                       className="-mx-2 flex items-start gap-3 rounded-lg px-2 py-3 transition-colors hover:bg-navy-50/60"
                     >
-                      <Avatar name={author?.name} size="sm" />
+                      <Avatar name={author?.name} photo={author?.photo} size="sm" />
                       <div className="min-w-0 flex-1">
                         <p className="truncate font-semibold text-navy-900">{post.title}</p>
                         <p className="truncate text-xs text-slate-500">

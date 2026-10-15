@@ -1,4 +1,5 @@
 import Button from './Button.jsx';
+import { MEGAPHONE_PATHS } from './icons.js';
 // Importing the photo lets the build add a fingerprint to its file name,
 // so browsers pick up a new version instead of showing a stale cached one.
 import campusPhoto from '../assets/OllcfLogo.jpg';
@@ -104,9 +105,9 @@ function Header({ onPostSuggestion, onVoiceOut }) {
           <Button variant="outline" size="lg" onClick={onVoiceOut} className="w-full sm:w-auto">
             {/* A megaphone, the same shape used in the CampusVoiceBox logo. */}
             <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className="h-5 w-5">
-              <path d="M3 10.5v3a1.5 1.5 0 0 0 1.5 1.5H6l3.2 3.7a1 1 0 0 0 1.8-.7V5.5a1 1 0 0 0-1.8-.7L6 8.5H4.5A1.5 1.5 0 0 0 3 10.5Z" />
-              <path d="M14.5 9a1 1 0 0 1 1.4 0 4.3 4.3 0 0 1 0 6 1 1 0 1 1-1.4-1.4 2.3 2.3 0 0 0 0-3.2 1 1 0 0 1 0-1.4Z" />
-              <path d="M17.3 6.2a1 1 0 0 1 1.4 0 8.2 8.2 0 0 1 0 11.6 1 1 0 0 1-1.4-1.4 6.2 6.2 0 0 0 0-8.8 1 1 0 0 1 0-1.4Z" />
+              {MEGAPHONE_PATHS.map((path) => (
+                <path key={path} d={path} />
+              ))}
             </svg>
             Voice Out
           </Button>

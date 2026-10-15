@@ -1,3 +1,7 @@
 # macOS resource-fork and Finder files (created on FAT/exFAT drives)
 ._*
 .DS_Store
+
+# The settings beside docker-compose.yml - the default administrator's
+# password lives here (see GUIDE.md), so it must never be committed.
+/.env
