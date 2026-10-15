@@ -28,7 +28,7 @@
 
 import { STORAGE_KEYS } from './consent.js';
 
-export const API_URL =
+const API_URL =
   process.env.REACT_APP_API_URL ||
   (process.env.NODE_ENV === 'production' ? '/api' : 'http://localhost:4000/api');
 
@@ -66,7 +66,7 @@ export function isTokenKey(key) {
  * An error the server answered with, carrying its HTTP status and whatever
  * else it sent - a refused sign-up also says which `field` it is about.
  */
-export class ApiError extends Error {
+class ApiError extends Error {
   constructor(message, status = 0, data = {}) {
     super(message);
     this.status = status;

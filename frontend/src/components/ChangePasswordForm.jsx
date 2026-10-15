@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useStore } from '../services/store.js';
-import { PASSWORD_PATTERN, PASSWORD_RULE_MESSAGE } from '../data/accountFields.js';
+import { PASSWORD_RULE_MESSAGE, newPasswordProblem } from '../data/accountFields.js';
 import Button from './Button.jsx';
 import { Field, Notice, Panel, TextInput } from './admin/ui.jsx';
 
@@ -44,12 +44,9 @@ function ChangePasswordForm() {
       setError('Please enter your current password.');
       return;
     }
-    if (!PASSWORD_PATTERN.test(passwords.next)) {
-      setError(PASSWORD_RULE_MESSAGE);
-      return;
-    }
-    if (passwords.next !== passwords.confirm) {
-      setError('The two new passwords do not match.');
+    const problem = newPasswordProblem(passwords.next, passwords.confirm);
+    if (problem) {
+      setError(problem.message);
       return;
     }
 

@@ -102,7 +102,7 @@ export const OPEN_PRIVACY_STATUSES = ['pending', 'in_progress'];
 /*
  * The privacy log's entries, in words - the actions the server records in
  * privacy_events (backend/src/controllers/privacyController.js and the
- * privacy-request route in backend/src/routes/adminRoutes.js).
+ * privacy-request route in backend/src/routes/admin/privacyRequests.js).
  */
 export const PRIVACY_EVENT_WORDS = {
   request_submitted: 'Made a request',

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useStore } from '../services/store.js';
-import { PASSWORD_PATTERN, PASSWORD_RULE_MESSAGE } from '../data/accountFields.js';
+import { PASSWORD_RULE_MESSAGE, newPasswordProblem } from '../data/accountFields.js';
 import AuthCard from '../components/AuthCard.jsx';
 import TextField from '../components/TextField.jsx';
 import Button from '../components/Button.jsx';
@@ -54,12 +54,9 @@ function ResetPassword() {
     event.preventDefault();
     if (busy) return;
 
-    if (!PASSWORD_PATTERN.test(passwords.next)) {
-      setError(PASSWORD_RULE_MESSAGE);
-      return;
-    }
-    if (passwords.next !== passwords.confirm) {
-      setError('The two passwords do not match.');
+    const problem = newPasswordProblem(passwords.next, passwords.confirm);
+    if (problem) {
+      setError(problem.message);
       return;
     }
 

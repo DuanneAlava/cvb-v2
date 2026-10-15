@@ -12,7 +12,16 @@ import {
 } from '../data/policies.js';
 import Button from './Button.jsx';
 import ConfirmDialog from './ConfirmDialog.jsx';
-import { Badge, Field, Notice, Panel, TextArea, formatDate, formatDateTime } from './admin/ui.jsx';
+import {
+  Badge,
+  Field,
+  Notice,
+  Panel,
+  TextArea,
+  formatDate,
+  formatDateTime,
+  formatVersionDate,
+} from './admin/ui.jsx';
 
 /*
  * PRIVACY & DATA - the last panel on a student's account page (/account).
@@ -413,10 +422,9 @@ function Section({ title, children }) {
   );
 }
 
-// A policy version is the date it was written: '2026-10-13' -> '13 Oct 2026'.
+// A policy version as a date, the same as the policy pages show it.
 function formatVersion(version) {
-  if (!version) return 'an earlier date';
-  return formatDate(`${version}T00:00:00`);
+  return version ? formatVersionDate(version) : 'an earlier date';
 }
 
 export default PrivacyData;

@@ -1,5 +1,5 @@
 # CampusVoiceBox frontend - development-friendly image (CRA dev server)
-FROM node:20-alpine
+FROM node:24-alpine
 
 WORKDIR /app
 

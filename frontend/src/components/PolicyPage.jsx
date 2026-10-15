@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { ORGANIZATION } from '../data/policies.js';
 import BackButton from './BackButton.jsx';
+import { formatVersionDate } from './admin/ui.jsx';
 
 /*
  * THE FRAME EVERY POLICY PAGE SHARES - the Privacy Policy, the Terms &
@@ -30,11 +31,6 @@ const OTHER_POLICIES = [
 ];
 
 const UNCONFIRMED = Object.values(ORGANIZATION).some((fact) => fact.value === null);
-
-// A version is the date its text last changed: '2026-10-14' -> '14 October 2026'.
-// When it takes effect is the school's decision - a fact still to be confirmed.
-const lastUpdated = (version) =>
-  new Date(`${version}T00:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
 
 // A fact from data/policies.js, or a highlighted note saying it is still needed.
 export function ToConfirm({ fact }) {
@@ -103,7 +99,9 @@ function PolicyPage({ title, version, summary, sections }) {
 
       <h1 className="text-2xl font-bold text-navy-900 sm:text-3xl">{title}</h1>
       <p className="mt-2 text-sm text-slate-500">
-        Version {version} · Last updated {lastUpdated(version)} · Takes effect:{' '}
+        {/* When the policy takes effect is the school's decision - a fact
+            still to be confirmed. */}
+        Version {version} · Last updated {formatVersionDate(version)} · Takes effect:{' '}
         <ToConfirm fact="effectiveDate" />
       </p>
       <p className="mt-4 text-base leading-relaxed text-slate-700">{summary}</p>

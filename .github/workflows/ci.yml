@@ -1,11 +1,13 @@
 name: CampusVoiceBox CI
 
 # Runs on every push and pull request against main.
-# This is the "CI/CD pipeline skeleton" checklist item: it proves the
-# frontend builds, the backend starts and can talk to a real Postgres
-# database, and both Docker images build cleanly. It stops short of an
-# actual deploy step (Vercel/Netlify/EC2/etc.) - add that job once you have
-# hosting decided, following the commented example at the bottom.
+# It proves both apps pass ESLint, the lists the frontend and backend each
+# keep still match (scripts/check-shared-lists.mjs), the API tests pass
+# against a real Postgres (backend/test/), the migrations run and the server
+# starts, the website builds, and every Docker image - development and
+# production - builds cleanly. It stops short of an actual deploy step - add
+# that job once hosting is decided, following the commented example at the
+# bottom.
 
 on:
   push:
@@ -15,7 +17,7 @@ on:
 
 jobs:
   frontend:
-    name: Frontend - install & build
+    name: Frontend - install, lint & build
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -24,16 +26,19 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
+      # frontend/.env switches ESLint off inside the build, so it runs here
+      # instead - any error or warning fails the job.
+      - run: npm run lint
       - run: npm run build --if-present
         env:
           CI: true
 
   backend:
-    name: Backend - install & migrate against a real Postgres
+    name: Backend - lint, lists, API tests & migrate against a real Postgres
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -44,11 +49,13 @@ jobs:
         env:
           POSTGRES_USER: cvb_user
           POSTGRES_PASSWORD: cvb_password
-          POSTGRES_DB: campusvoicebox
+          # The API tests wipe their database, so they only run on one whose
+          # name ends in _test (backend/test/api.test.js).
+          POSTGRES_DB: campusvoicebox_test
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U cvb_user -d campusvoicebox"
+          --health-cmd "pg_isready -U cvb_user -d campusvoicebox_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -57,16 +64,19 @@ jobs:
       PGPORT: 5432
       PGUSER: cvb_user
       PGPASSWORD: cvb_password
-      PGDATABASE: campusvoicebox
+      PGDATABASE: campusvoicebox_test
       JWT_SECRET: ci-test-secret
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
+      - run: npm run lint
+      - name: The lists the frontend and backend both keep still match
+        run: node ../scripts/check-shared-lists.mjs
       - name: Run migrations against the CI database
         run: npm run db:migrate
       - name: Boot the server and hit /api/health
@@ -74,9 +84,11 @@ jobs:
           npm start &
           npx wait-on http://localhost:4000/api/health -t 15000
           curl -f http://localhost:4000/api/health
+      - name: API tests
+        run: npm test
 
   docker-build:
-    name: Docker images build cleanly
+    name: Docker images build cleanly (development and production)
     runs-on: ubuntu-latest
     needs: [frontend, backend]
     steps:
@@ -85,6 +97,10 @@ jobs:
         run: docker build -t campusvoicebox-backend ./backend
       - name: Build frontend image
         run: docker build -t campusvoicebox-frontend ./frontend
+      - name: Build production backend image
+        run: docker build -f backend/Dockerfile.prod -t campusvoicebox-backend-prod ./backend
+      - name: Build production website image (nginx)
+        run: docker build -f frontend/Dockerfile.prod -t campusvoicebox-web-prod ./frontend
 
   # --- Deploy stage (skeleton only - fill in once hosting is chosen) ---
   # deploy:
@@ -95,5 +111,5 @@ jobs:
   #   steps:
   #     - uses: actions/checkout@v4
   #     # Vercel/Netlify (frontend): use their official deploy-action here.
-  #     # Docker -> EC2 (backend): docker push to a registry, then SSH in
-  #     # and `docker compose pull && docker compose up -d`.
+  #     # Docker -> a server: push the production images to a registry,
+  #     # then SSH in and `docker compose -f docker-compose.prod.yml up -d`.

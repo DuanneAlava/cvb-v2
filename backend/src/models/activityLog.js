@@ -1,13 +1,15 @@
 /*
  * WRITING TO THE ACTIVITY LOG - one INSERT for every part of the backend.
  *
- * Five places record an entry: the admin routes (every administrative
- * action), signing up, in and out and changing a password
- * (controllers/authController.js), a person changing their own account
- * (controllers/accountController.js and privacyController.js - through
- * logOwnChange below) and the make-admin command
- * (config/make-admin.js). They share this one statement, so a column added
- * to activity_logs has one place to be remembered in.
+ * Six places record an entry: the admin routes (every administrative
+ * action), signing up, in and out and resetting a password
+ * (controllers/authController.js), a person changing their own account or
+ * password (controllers/accountController.js and privacyController.js), the
+ * default administrator being created (config/defaultAdmin.js) and the
+ * make-admin command (config/make-admin.js). They share this one statement,
+ * so a column added to activity_logs has one place to be remembered in - and
+ * all but the command line go through logAs() below, so who did it is
+ * copied from their account in one place too.
  *
  * `db` is the pool, or a client inside a transaction - pass the client when
  * the entry has to succeed or fail together with the change it records.
@@ -39,21 +41,32 @@ async function writeActivityLog(
 }
 
 /*
+ * An entry recorded as `account`'s own action - an administrator acting in
+ * the panel, somebody signing in or changing their own account. Their id,
+ * name and role are copied from the account; `req` is the request it came
+ * from, for the address it was made from (the server's own start-up has
+ * none).
+ */
+function logAs(db, account, action, { targetType = null, targetId = null, details = null, req = null } = {}) {
+  return writeActivityLog(db, {
+    adminId: account.id,
+    adminName: account.name,
+    adminRole: account.role,
+    action,
+    targetType,
+    targetId,
+    details,
+    ip: req?.ip ?? null,
+  });
+}
+
+/*
  * The entry for a change somebody made to their OWN account - their details,
  * their photo, their consent for school details - recorded as their action.
  * Shared by controllers/accountController.js and privacyController.js.
  */
 function logOwnChange(client, req, details) {
-  return writeActivityLog(client, {
-    adminId: req.user.id,
-    adminName: req.user.name,
-    adminRole: req.user.role,
-    action: 'user_updated',
-    targetType: 'user',
-    targetId: req.user.id,
-    details,
-    ip: req.ip,
-  });
+  return logAs(client, req.user, 'user_updated', { targetType: 'user', targetId: req.user.id, details, req });
 }
 
-module.exports = { writeActivityLog, logOwnChange };
+module.exports = { writeActivityLog, logAs, logOwnChange };

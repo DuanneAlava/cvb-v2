@@ -3,7 +3,7 @@ const authRoutes = require('./authRoutes');
 const suggestionsRoutes = require('./suggestionsRoutes');
 const accountRoutes = require('./accountRoutes');
 const privacyRoutes = require('./privacyRoutes');
-const adminRoutes = require('./adminRoutes');
+const adminRoutes = require('./admin');
 const { getState } = require('../controllers/stateController');
 const { attachUserIfPresent } = require('../middleware/auth');
 
@@ -21,8 +21,8 @@ router.use('/', privacyRoutes); // /account/terms, consents, /account/export, /p
 
 /*
  * The admin API. Everything under /admin is authenticated and permission-
- * checked inside adminRoutes.js, one check per route - mounting it here does
- * not protect it, the checks in that file do.
+ * checked inside routes/admin/, one check per route - mounting it here does
+ * not protect it, the checks in those files do.
  */
 router.use('/admin', adminRoutes);
 

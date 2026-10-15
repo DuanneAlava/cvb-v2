@@ -1,0 +1,8 @@
+# Kept out of the Docker images: the packages are installed inside the image
+# (for this system, not the computer building it), and settings files can hold
+# passwords.
+node_modules
+npm-debug.log*
+.env
+test
+postman

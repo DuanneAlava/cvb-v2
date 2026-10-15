@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext.jsx';
 import AuthCard from '../components/AuthCard.jsx';
 import TextField from '../components/TextField.jsx';
 import { programOptions } from '../data/programs.js';
-import { EMAIL_PATTERN, PASSWORD_PATTERN, PASSWORD_RULE_MESSAGE } from '../data/accountFields.js';
+import { EMAIL_PATTERN, PASSWORD_RULE_MESSAGE, newPasswordProblem } from '../data/accountFields.js';
 import { POLICY_VERSIONS } from '../data/policies.js';
 import Button from '../components/Button.jsx';
 import { Notice } from '../components/admin/ui.jsx';
@@ -108,15 +108,12 @@ function Signup() {
       found.email = 'Please enter a valid school email address.';
     }
 
-    // The shared rule from data/accountFields.js - the same one the account
-    // page uses when a password is changed.
-    if (!PASSWORD_PATTERN.test(form.password)) {
-      found.password = PASSWORD_RULE_MESSAGE;
-    }
-
-    // Only complain about the second password box once the first one is valid.
-    if (form.confirm !== form.password) {
-      found.confirm = 'The two passwords do not match.';
+    // The shared check from data/accountFields.js - the same one the account
+    // page and the reset page use. It only complains about the second
+    // password box once the first one is valid.
+    const passwordProblem = newPasswordProblem(form.password, form.confirm);
+    if (passwordProblem) {
+      found[passwordProblem.field] = passwordProblem.message;
     }
 
     // The same words the server answers with.
@@ -170,7 +167,7 @@ function Signup() {
   return (
     <AuthCard
       title="Create your account"
-      subtitle="Every new account starts as a student account."
+      subtitle="Add your Student ID for a student account, or leave it blank for a user account."
       footer={
         <>
           Already have an account?{' '}

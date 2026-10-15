@@ -43,9 +43,9 @@ const pool = require('../config/db');
 // it here too, and to the CHECK on users.role in models/schema.sql - and
 // prefer requirePermission below to naming roles directly. This is also the
 // backend's one list of which roles exist: changing somebody's role
-// (routes/adminRoutes.js) accepts exactly the roles named here.
+// (routes/admin/users.js) accepts exactly the roles named here.
 const ROLE_PERMISSIONS = {
-  // One admin role, holding everything. The self-checks in adminRoutes.js
+  // One admin role, holding everything. The self-checks in routes/admin/
   // (no changing your own role or status, no deleting yourself) are what
   // keep the reserved powers from being turned on the account using them.
   admin: [

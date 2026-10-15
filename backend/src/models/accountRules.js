@@ -2,7 +2,7 @@
  * THE RULES FOR AN ACCOUNT'S DETAILS - one copy for every route that sets
  * them: registering (controllers/authController.js), a person editing their
  * own account (controllers/accountController.js) and an administrator editing
- * anybody's (routes/adminRoutes.js). The server-side twin of the frontend's
+ * anybody's (routes/admin/users.js). The server-side twin of the frontend's
  * frontend/src/data/accountFields.js, whose rules these must match.
  */
 

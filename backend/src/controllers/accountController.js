@@ -1,7 +1,7 @@
 const bcrypt = require('bcryptjs');
 const pool = require('../config/db');
 const { can, signToken } = require('../middleware/auth');
-const { writeActivityLog, logOwnChange } = require('../models/activityLog');
+const { logAs, logOwnChange } = require('../models/activityLog');
 const { inTransaction } = require('../models/transaction');
 const {
   PASSWORD_PATTERN,
@@ -24,7 +24,7 @@ const { toId } = require('../models/shape');
 /*
  * PATCH /api/account - the profile form on /account. A person may change
  * their name and school details; their email, role and status are an
- * administrator's to change (routes/adminRoutes.js). A save that changes
+ * administrator's to change (routes/admin/users.js). A save that changes
  * nothing is not logged; one that does names only the fields that changed.
  */
 async function updateAccount(req, res, next) {
@@ -187,15 +187,11 @@ async function changePassword(req, res, next) {
         new Date(),
         req.user.id,
       ]);
-      await writeActivityLog(client, {
-        adminId: req.user.id,
-        adminName: req.user.name,
-        adminRole: req.user.role,
-        action: 'password_changed',
+      await logAs(client, req.user, 'password_changed', {
         targetType: 'user',
         targetId: req.user.id,
         details: req.user.name,
-        ip: req.ip,
+        req,
       });
     });
 

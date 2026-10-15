@@ -53,8 +53,20 @@ export const STUDENT_EDITABLE_FIELDS = ACCOUNT_FIELDS.filter((field) => !field.a
  * characters, with at least one letter and at least one number. The server
  * applies the same rule (backend/src/models/accountRules.js).
  */
-export const PASSWORD_PATTERN = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/;
+const PASSWORD_PATTERN = /^(?=.*[A-Za-z])(?=.*\d).{8,}$/;
 export const PASSWORD_RULE_MESSAGE = 'Use at least 8 characters, with one letter and one number.';
+
+/*
+ * The check a new password gets on all three forms before it is sent: the
+ * rule above, then the box that repeats it - only complained about once the
+ * password itself is valid. Returns the first problem as { field, message },
+ * `field` being 'password' or 'confirm', or null when there is none.
+ */
+export function newPasswordProblem(password, confirm) {
+  if (!PASSWORD_PATTERN.test(password)) return { field: 'password', message: PASSWORD_RULE_MESSAGE };
+  if (password !== confirm) return { field: 'confirm', message: 'The two passwords do not match.' };
+  return null;
+}
 
 /*
  * THE EMAIL RULE, for every place an address is set: signing up, and an

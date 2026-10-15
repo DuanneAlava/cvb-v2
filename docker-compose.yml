@@ -14,7 +14,8 @@
 # - frontend: React dev server on http://localhost:3000
 #
 # This is a LOCAL/DEV setup (hot reload, no build optimisation). It is not
-# meant to be deployed as-is - see GUIDE.md for what changes for production.
+# meant to be deployed as-is - docker-compose.prod.yml is the production one
+# (GUIDE.md, section 3b).
 
 services:
   db:

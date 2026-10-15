@@ -3,7 +3,7 @@ const bcrypt = require('bcryptjs');
 const pool = require('../config/db');
 const { sendMail } = require('../config/mail');
 const { can, signToken } = require('../middleware/auth');
-const { writeActivityLog } = require('../models/activityLog');
+const { logAs } = require('../models/activityLog');
 const { inTransaction } = require('../models/transaction');
 const {
   EMAIL_PATTERN,
@@ -48,16 +48,7 @@ async function checkPassword(email, password) {
 // would bury the decisions it exists to show.
 function logSession(account, action, req) {
   if (!can(account, 'view_admin')) return null;
-  return writeActivityLog(pool, {
-    adminId: account.id,
-    adminName: account.name,
-    adminRole: account.role,
-    action,
-    targetType: 'user',
-    targetId: account.id,
-    details: account.email,
-    ip: req.ip,
-  });
+  return logAs(pool, account, action, { targetType: 'user', targetId: account.id, details: account.email, req });
 }
 
 // POST /api/auth/register
@@ -359,15 +350,11 @@ async function resetPassword(req, res, next) {
         account.id,
       ]);
       await client.query('DELETE FROM password_resets WHERE user_id = $1', [account.id]);
-      await writeActivityLog(client, {
-        adminId: account.id,
-        adminName: account.name,
-        adminRole: account.role,
-        action: 'password_changed',
+      await logAs(client, account, 'password_changed', {
         targetType: 'user',
         targetId: account.id,
         details: `${account.name} - with an emailed reset link`,
-        ip: req.ip,
+        req,
       });
       return true;
     });

@@ -1,5 +1,6 @@
 const app = require('./app');
 const { ensureDefaultAdmin } = require('./config/defaultAdmin');
+const { mailConfigured } = require('./config/mail');
 
 /*
  * REFUSE TO START WITHOUT A REAL SECRET.
@@ -32,7 +33,7 @@ if (process.env.NODE_ENV === 'production' && (secret === PLACEHOLDER || secret.l
  * working, so they are warnings, not refusals.
  */
 if (process.env.NODE_ENV === 'production') {
-  if (!process.env.SMTP_HOST) {
+  if (!mailConfigured) {
     console.warn('SMTP_HOST is not set, so "Forgot password?" cannot email reset links. See .env.example.');
   }
   if (!process.env.APP_URL) {

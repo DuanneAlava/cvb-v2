@@ -1,0 +1,19 @@
+# CampusVoiceBox API - production image (docker-compose.prod.yml).
+# Only the packages the server needs while running - no file watcher, no
+# linter, no tests - and it runs as the unprivileged "node" user, not root.
+FROM node:24-alpine
+
+WORKDIR /app
+ENV NODE_ENV=production
+
+COPY package*.json ./
+RUN npm ci --omit=dev && npm cache clean --force
+
+COPY src ./src
+
+USER node
+EXPOSE 4000
+
+# Bring the database up to date first - models/schema.sql only adds what is
+# missing, so running it at every start is safe - then start the server.
+CMD ["sh", "-c", "node src/config/migrate.js && node src/server.js"]

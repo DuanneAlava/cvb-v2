@@ -26,7 +26,7 @@
  */
 const bcrypt = require('bcryptjs');
 const pool = require('./db');
-const { writeActivityLog } = require('../models/activityLog');
+const { logAs } = require('../models/activityLog');
 const { inTransaction } = require('../models/transaction');
 const { EMAIL_PATTERN, PASSWORD_PATTERN, PASSWORD_RULE_MESSAGE } = require('../models/accountRules');
 
@@ -80,15 +80,7 @@ async function ensureDefaultAdmin() {
     const account = inserted[0];
 
     // Recorded, so the activity log shows how the panel got its administrator.
-    await writeActivityLog(client, {
-      adminId: account.id,
-      adminName: account.name,
-      adminRole: account.role,
-      action: 'first_admin',
-      targetType: 'user',
-      targetId: account.id,
-      details: account.email,
-    });
+    await logAs(client, account, 'first_admin', { targetType: 'user', targetId: account.id, details: account.email });
     return 'created';
   });
 

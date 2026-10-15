@@ -322,6 +322,12 @@ export function formatDate(iso) {
   });
 }
 
+// A policy version is the date its text last changed, '2026-10-14', printed
+// like any other date. Read as local midnight, so it never shows the day before.
+export function formatVersionDate(version) {
+  return formatDate(`${version}T00:00:00`);
+}
+
 export function formatDateTime(iso) {
   if (!iso) return '';
   return new Date(iso).toLocaleString(undefined, {

@@ -317,7 +317,7 @@ export const TONE_CLASS = {
  * The administrative actions worth recording. Everything an admin does that
  * changes somebody else's data is done by the server, which writes one of
  * these as part of the same change, so the log cannot be forgotten at the
- * call site. The server writes them in backend/src/routes/adminRoutes.js
+ * call site. The server writes them in backend/src/routes/admin/
  * and backend/src/controllers/ (authController.js, accountController.js) -
  * a new action there needs its label here.
  * ------------------------------------------------------------------ */

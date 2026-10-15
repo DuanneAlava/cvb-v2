@@ -19,7 +19,7 @@ const { iso, str, toId } = require('../models/shape');
  * and never on an id sent in the request (a request id is only ever looked
  * up together with the asker's own id), so nobody can see or change another
  * person's choices or requests through these. What administrators do with a
- * request is in routes/adminRoutes.js, behind the manage_privacy permission.
+ * request is in routes/admin/privacyRequests.js, behind the manage_privacy permission.
  */
 
 const RELOAD =

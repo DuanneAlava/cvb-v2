@@ -67,7 +67,6 @@ const mustAcceptTerms = (latestAccepted) =>
 
 module.exports = {
   POLICY_VERSIONS,
-  TERMS_REQUIRED_VERSION,
   COOKIE_CONSENT_VERSION,
   OPTIONAL_COOKIE_CATEGORIES,
   PRIVACY_REQUEST_TYPES,

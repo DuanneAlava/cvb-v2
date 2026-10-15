@@ -443,6 +443,19 @@ export function unreadCountFor(data, user) {
  * ------------------------------------------------------------------ */
 
 /*
+ * A request whose refusal is answered as `{ error }` - the server's own
+ * explanation - instead of thrown: what every action hands back to the
+ * screen that called it.
+ */
+async function orError(request) {
+  try {
+    return await request();
+  } catch (problem) {
+    return { error: problem.message };
+  }
+}
+
+/*
  * Every change goes through here. `request` sends it; once the server has
  * accepted it, the copy is fetched again, so whatever the change did - the
  * new status, the audit entry, the student's notification - is on screen by
@@ -494,21 +507,15 @@ async function signIn(request) {
  * is signed in for either, so there is nothing to fetch again afterwards.
  * Each answers `{ error }`, or what the server said.
  */
-async function requestPasswordReset(email) {
-  try {
-    return await api.forgotPassword(email);
-  } catch (problem) {
-    return { error: problem.message };
-  }
+function requestPasswordReset(email) {
+  return orError(() => api.forgotPassword(email));
 }
 
-async function resetPassword(token, newPassword) {
-  try {
+function resetPassword(token, newPassword) {
+  return orError(async () => {
     await api.resetPassword(token, newPassword);
     return {};
-  } catch (problem) {
-    return { error: problem.message };
-  }
+  });
 }
 
 /*
@@ -516,15 +523,13 @@ async function resetPassword(token, newPassword) {
  * device and hands this one a new token, which replaces the old one - so the
  * person stays signed in here, in every tab of this browser.
  */
-async function changeOwnPassword(currentPassword, newPassword) {
-  try {
+function changeOwnPassword(currentPassword, newPassword) {
+  return orError(async () => {
     const { token } = await api.changeOwnPassword(currentPassword, newPassword);
     writeToken(token);
     await refresh();
     return {};
-  } catch (problem) {
-    return { error: problem.message };
-  }
+  });
 }
 
 /*
@@ -569,21 +574,13 @@ function toggleVote(postId) {
 }
 
 // The whole activity log, for the export - the copy holds the latest 500.
-async function fullActivityLog() {
-  try {
-    return await api.admin.activityLog();
-  } catch (problem) {
-    return { error: problem.message };
-  }
+function fullActivityLog() {
+  return orError(() => api.admin.activityLog());
 }
 
 // The signed-in person's data, as { blob, filename } for the page to save.
-async function exportMyData() {
-  try {
-    return await api.exportMyData();
-  } catch (problem) {
-    return { error: problem.message };
-  }
+function exportMyData() {
+  return orError(() => api.exportMyData());
 }
 
 /*

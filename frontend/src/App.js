@@ -4,7 +4,7 @@ import {
   RequireAuth,
   RequirePermission,
   RedirectIfSignedIn,
-  AdminHomeRedirect,
+  RedirectIfAdmin,
 } from './components/RequireAuth.jsx';
 import { PERMISSIONS } from './data/roles.js';
 import { ASSIGNABLE_KINDS, AWAITING_REVIEW, OPEN_STATUSES } from './data/workflow.js';
@@ -160,9 +160,9 @@ function App() {
             <Route
               path="/account"
               element={
-                <AdminHomeRedirect to="/admin/profile">
+                <RedirectIfAdmin to="/admin/profile">
                   <Account />
-                </AdminHomeRedirect>
+                </RedirectIfAdmin>
               }
             />
           </Route>

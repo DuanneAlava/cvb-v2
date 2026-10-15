@@ -49,7 +49,7 @@ import {
  *
  * NOBODY HANDLES THEIR OWN. A request about the signed-in administrator's
  * own account is shown, but only another administrator can act on it. The
- * server refuses it too (backend/src/routes/adminRoutes.js).
+ * server refuses it too (backend/src/routes/admin/privacyRequests.js).
  *
  * THE PRIVACY LOG, at the foot of the page, records every request made,
  * cancelled and handled, and every data download - who, what, when. Like

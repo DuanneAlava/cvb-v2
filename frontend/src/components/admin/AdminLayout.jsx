@@ -363,12 +363,10 @@ function AdminLayout() {
 
   const sidebar = (
     <div className="flex h-full flex-col bg-navy-800">
-      {/* The logo, linking back to the public board - the same mark and
-          wordmark the student site uses, so the two never look unrelated. */}
+      {/* The logo, linking to the dashboard - the same mark and wordmark the
+          student site uses, so the two never look unrelated. The board is
+          reached from "View site" in the top bar. */}
       <div className="border-b border-white/10 px-4 py-4">
-        {/* To the dashboard, not to "/" - that address now forwards an admin
-            back here anyway, so pointing at it would be a redirect for the
-            sake of one. */}
         <Link to="/admin/dashboard" className="flex min-h-[44px] items-center">
           <Logo tone="light" subtitle="Admin Panel" />
         </Link>

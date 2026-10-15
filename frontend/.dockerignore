@@ -1,0 +1,8 @@
+# Kept out of the Docker images: the packages are installed inside the image
+# (for its system, not the computer building it), a previous build is made
+# again, and local settings files stay local.
+node_modules
+build
+npm-debug.log*
+.env.local
+.env.*.local

@@ -68,7 +68,7 @@ const ROLES = {
    * What stops an admin abusing the powers that used to be reserved: the
    * self-checks. An account may never change its own role, suspend itself
    * or delete itself - see pages/admin/UserProfile.jsx and the matching
-   * guards in backend/src/routes/adminRoutes.js.
+   * guards in backend/src/routes/admin/users.js.
    */
   admin: {
     key: 'admin',

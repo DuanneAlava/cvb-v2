@@ -452,7 +452,7 @@ kept up to date → selectors → the actions → the hooks.
 Key lines, starting in `api.js`:
 
 ```js
-export const API_URL =
+const API_URL =
   process.env.REACT_APP_API_URL ||
   (process.env.NODE_ENV === 'production' ? '/api' : 'http://localhost:4000/api');
 ```
@@ -593,7 +593,7 @@ const actions = {
 ```
 The actions — the complete list of things the website can change. Each is one
 request. The rules (who may, which moves are legal, what the student is told)
-are the server's; see `routes/adminRoutes.js` in section F.
+are the server's; see `routes/admin/` in section F.
 
 ```js
 function toggleVote(postId) {
@@ -686,7 +686,7 @@ time.
 | `RequireAuth` | anyone signed in | → `/login`, remembering where they were going (or the board, just after "Log out") |
 | `RequirePermission` | signed in **and** holding the permission | → their own home page |
 | `RedirectIfSignedIn` | signed out (for `/login`, `/signup`) | → where they were going, or their home page |
-| `AdminHomeRedirect` | non-admins | admins → `to=` (their account page in the panel) |
+| `RedirectIfAdmin` | non-admins | admins → `to=` (their account page in the panel) |
 
 ```js
 function SignInFirst() {
@@ -725,7 +725,7 @@ administrator included: they can read, post and vote like anyone else.
 ```jsx
       <Route element={<RequireAuth />}>
         <Route path="/student/dashboard" element={<StudentDashboard />} />
-        <Route path="/account" element={<AdminHomeRedirect to="/admin/profile"><Account /></AdminHomeRedirect>} />
+        <Route path="/account" element={<RedirectIfAdmin to="/admin/profile"><Account /></RedirectIfAdmin>} />
       </Route>
 ```
 A guard with no `path` wraps a group: both routes inside need a signed-in
@@ -1586,12 +1586,22 @@ And this is where anonymity is kept: the name behind an anonymous post is only
 put into the answer for somebody with `view_identity`, or for the author. To
 everybody else it simply is not there.
 
-#### `routes/adminRoutes.js`
+#### `routes/admin/` — the admin API
 
 ```js
-const router = express.Router();
+// index.js
 router.use(requireAuth);
+router.use(usersRoutes); // /users/:id - details, status, role, deletion
+router.use(postsRoutes); // /posts/:id - status, assign, resolve, notes
 …
+```
+One file per area — `users.js`, `posts.js`, `privacyRequests.js`,
+`activityLogs.js`, with `helpers.js` for what two of them share — all mounted
+by `index.js` behind one `router.use(requireAuth)`, so a route cannot be added
+to any of them without at least being authenticated.
+
+```js
+// posts.js
 router.patch('/posts/:id/status', requirePermission('moderate_posts'), async (req, res, next) => {
   …
   const result = await inTransaction(async (client) => {
@@ -1601,15 +1611,19 @@ router.patch('/posts/:id/status', requirePermission('moderate_posts'), async (re
       return { status: 409, error: cannotMove(post, `moved to ${STATUSES[status].label}`) };
     }
     await client.query('UPDATE posts SET status = $1, rejection_reason = $2, updated_at = now() WHERE id = $3', …);
-    await writeLog(client, req, action, { … });
+    await logAs(client, req.user, action, { targetType: 'post', targetId: post.id, details, req });
     await notifyAuthor(client, post, notice.type, notice);
 ```
-Every route carries its own `requirePermission(…)`; `router.use(requireAuth)`
-makes it impossible to add one that is not at least authenticated. Then, in
-one transaction: hold the row (`FOR UPDATE`, so two admins acting at once take
-turns), refuse a move the workflow does not allow — the same `next` lists the
-review dialog draws its buttons from (`models/workflow.js`) — make the change,
-write the audit entry, tell the student. All of it, or none.
+Every route carries its own `requirePermission(…)`. Then, in one transaction:
+hold the row (`FOR UPDATE`, so two admins acting at once take turns), refuse a
+move the workflow does not allow — the same `next` lists the review dialog
+draws its buttons from (`models/workflow.js`) — make the change, write the
+audit entry, tell the student. All of it, or none.
+
+`logAs()` (`models/activityLog.js`) is how every audit entry is written, here
+and in the controllers: it copies who did it — id, name, role — from their
+account, and the address from the request, in one place, so no handler can
+record half an entry.
 
 ```js
 async function inTransaction(handler) {
@@ -1629,10 +1643,10 @@ Changing a status, writing the audit entry and notifying the student must
 succeed or fail *together*. A half-applied approval — published but nobody
 told — is worse than a failed one. It lives in `models/transaction.js`.
 
-The self-checks — no changing your own role or status, no resetting your own
-password, no deleting yourself — are here too, as the server-side twin of
-`isSelf` in `UserProfile.jsx`, and the thing that keeps the one admin role
-honest.
+The self-checks — no changing your own role or status, no deleting yourself
+(`users.js`), no handling a privacy request about your own account
+(`privacyRequests.js`) — are here too, as the server-side twin of `isSelf` in
+`UserProfile.jsx`, and the thing that keeps the one admin role honest.
 
 #### `controllers/authController.js`
 
@@ -1675,6 +1689,29 @@ role VARCHAR(20) NOT NULL DEFAULT 'student'
 database enforces on every write — a row with any other role is refused
 outright, whatever the application tried. The statuses and kinds are checked
 the same way, against exactly the six statuses and five kinds the website uses.
+
+#### `test/api.test.js` and `scripts/check-shared-lists.mjs` — the checks
+
+```js
+test('an administrator reviewing', async (t) => {
+  await t.test('approving publishes it, tells the author and is logged', async () => {
+    const { status } = await call('PATCH', `/admin/posts/${concernId}/status`, { token: admin.token, body: { status: 'approved' } });
+    assert.equal(status, 204);
+    …
+```
+The API tests start the real server on a free port, against a real database,
+and send it what the website would: HTTP requests with JSON. They run top to
+bottom as one story — sign up, post, review, vote, reset a password, handle a
+privacy request, manage accounts — checking each answer, and reading the
+activity log rows straight from the database to check who each entry names.
+The run wipes its database first, so it refuses one whose name does not end in
+`_test`.
+
+`check-shared-lists.mjs` loads the website's copy and the server's copy of
+every list kept on both sides (SYSTEM-ARCHITECTURE.md section 11)
+and fails if any two differ — the two rudeness filters are run on the same
+inputs, so a change to one filter's code is caught as well as a change to its
+words. CI runs both on every push.
 
 ### G. Privacy, consent and the policies
 

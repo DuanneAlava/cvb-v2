@@ -115,7 +115,7 @@ export function RedirectIfSignedIn({ children }) {
  * see, only where that page is for them. A student is unaffected. The board
  * itself is open to administrators like everybody else.
  */
-export function AdminHomeRedirect({ to, children }) {
+export function RedirectIfAdmin({ to, children }) {
   const { user, can } = useAuth();
 
   if (user && can(PERMISSIONS.VIEW_ADMIN)) {

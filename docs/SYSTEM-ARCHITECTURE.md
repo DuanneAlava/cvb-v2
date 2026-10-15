@@ -138,7 +138,7 @@ Development and demonstration run as three containers, brought up together by
    │                                                              │
    │   ┌────────────────┐   ┌────────────────┐   ┌─────────────┐  │
    │   │  frontend      │   │  backend       │   │  db         │  │
-   │   │  node:20-alpine│   │  node:20-alpine│   │  postgres:16│  │
+   │   │  node:24-alpine│   │  node:24-alpine│   │  postgres:16│  │
    │   │  CRA dev server│──▶│  Express API   │──▶│  -alpine    │  │
    │   │  :3000         │   │  :4000         │   │  :5432      │  │
    │   └────────────────┘   └────────────────┘   └──────┬──────┘  │
@@ -162,9 +162,12 @@ Details that matter:
 - **Source is bind-mounted, `node_modules` is not.** `./backend:/app` plus an
   anonymous volume at `/app/node_modules` gives hot reload without the host's
   (possibly macOS-built) modules overwriting the container's Linux ones.
-- **These images are development images.** Both Dockerfiles run dev servers
-  (`npm run dev`, `npm start`) with no build step and no optimisation. They are
-  not production artefacts — see [section 22](#22-release-and-deployment-path).
+- **These images are development images.** Both `Dockerfile`s run dev servers
+  (`npm run dev`, `npm start`) with no build step and no optimisation. The
+  production images are separate — `Dockerfile.prod` in each app, brought up by
+  `docker-compose.prod.yml`: the built website served by nginx, which passes
+  `/api` on to an API holding only its runtime packages, with only nginx
+  published — see [section 22](#22-release-and-deployment-path).
 
 ---
 
@@ -313,7 +316,7 @@ the access-control model expressed as nesting:
 <AuthProvider>                        ← everyone can ask "who is signed in?"
  └ <BrowserRouter>
     ├ <Layout>                        ← navbar + footer frame
-    │   └ /                           the board (admins get bounced to /admin)
+    │   └ /                           the board (open to admins too)
     ├ /login · /signup                signed-out only
     ├ /forgot-password                anyone - asks for an emailed reset link
     ├ /reset-password                 anyone - the emailed link proves who it is
@@ -418,7 +421,7 @@ components/
   Header.jsx        the landing hero (staggered fade-in)
   SuggestionCard.jsx  one submission on the board
   PostModal.jsx     the post / voice-out form
-  RequireAuth.jsx   RequireAuth · RequirePermission · RedirectIfSignedIn · AdminHomeRedirect
+  RequireAuth.jsx   RequireAuth · RequirePermission · RedirectIfSignedIn · RedirectIfAdmin
   Reveal.jsx        IntersectionObserver fade-in, honours prefers-reduced-motion
   PopupFrame.jsx    the frame every pop-up sits in: backdrop, Escape, scroll lock, ✕
   AttachmentList.jsx  a post's photos and PDFs, each fetched from the server
@@ -479,7 +482,7 @@ the admin sidebar collapses.
                          requirePermission  → not suspended, and holds the permission
       │
       ▼
-  controllers/ · routes/adminRoutes.js
+  controllers/ · routes/admin/
                          the actual work, in a transaction where a change must
                          also write a notification and an audit row
       │
@@ -494,7 +497,7 @@ the admin sidebar collapses.
 
 | Folder | Responsibility | Must never |
 |---|---|---|
-| `routes/` | Map a URL to middleware + handler (the admin handlers live in `adminRoutes.js`) | Skip a permission check |
+| `routes/` | Map a URL to middleware + handler (the admin handlers live in `routes/admin/`, one file per area) | Skip a permission check |
 | `controllers/` | Do the work; own the transaction | Read `req.headers` for auth |
 | `middleware/` | Authenticate, authorise, limit, handle errors | Know about specific tables |
 | `config/` | Pool, migrate, make-admin | Be imported by a route directly |
@@ -766,7 +769,7 @@ Three deliberate choices in that second box:
 - **Self-checks instead of a second admin tier.** There is one admin role
   holding every permission. What keeps those powers in check is that an account
   may never change its own role, suspend itself, or delete itself — enforced in
-  `adminRoutes.js` as well as in the UI. Nobody can set another person's
+  `routes/admin/users.js` as well as in the UI. Nobody can set another person's
   password at all.
 
 ### 9.3 Anonymity
@@ -911,7 +914,14 @@ two deliberate copies, and a change to one must be made to the other:
 | Policy versions, the cookie-choice version, privacy request types | `data/policies.js` | `models/policies.js` |
 | The optional storage categories | `services/consent.js` | `OPTIONAL_COOKIE_CATEGORIES` in `models/policies.js` |
 
-No test guards these yet; each file says which other file is its twin.
+Each file says which other file is its twin, and `scripts/check-shared-lists.mjs`
+loads both copies and fails if they differ — CI runs it on every push. It covers
+the roles and permissions, the workflow lists, the categories, the account
+fields and the email and password rules, the policy versions and privacy
+request types, the word lists, and the filter itself (both copies are run on
+the same inputs). The title and message limits, the attachment rules and the
+storage categories are not checked yet: for those, the twin's name in each file
+is still the only guard.
 
 ---
 ---
@@ -1136,23 +1146,27 @@ the architecture — and each list is the definition of done for that change.
 | **An account field** | `ACCOUNT_FIELDS` in `data/accountFields.js` **and** in `backend/src/models/accountRules.js`, plus a column on `users`, the `/api/state` query and `shapeUser` (`backend/src/models/shape.js`) | Both account forms render it; the server's routes validate and save it |
 | **An admin page** | A `<Route>` inside the existing `<RequirePermission>` block in `App.js`, plus a sidebar entry | Guarded by existing; sidebar entry hides itself for roles without the permission |
 | **A notification type** | `NOTIFICATION_TYPES` in `data/workflow.js`, and the server code that writes it | Routed to the right audience with the right tone; no schema change needed |
-| **An admin endpoint** | A route in `adminRoutes.js` **with its own `requirePermission`**, and an action in `store.js` | Nothing is automatic here — the permission on the line *is* the protection |
+| **An admin endpoint** | A route in the right area file in `routes/admin/` **with its own `requirePermission`**, and an action in `store.js` | Nothing is automatic here — the permission on the line *is* the protection |
 
 ---
 
 ## 19. Testing strategy
 
-Stated honestly: **this project has a manual test process and an automated
-smoke test, not a test suite.** That is a deliberate scope decision for a
-capstone at this stage, and it is the largest single gap in the process.
+Stated honestly: **the API is tested automatically; the screens are tested by
+hand.** The server — where every rule is actually enforced — has an automated
+suite that runs on every push. The website has no automated tests of its own
+yet; it is checked with the manual matrix below.
 
 ### What exists
 
 | Level | Mechanism | What it proves |
 |---|---|---|
-| **API contract** | Postman collection (`backend/postman/`), run top to bottom — login first, which stores the token for every later request | Each endpoint accepts what it should and rejects what it should not |
+| **API tests** | `backend/test/api.test.js` (`npm test`, Node's built-in test runner), run in CI against a real Postgres 16. It wipes its database first, so it only runs on one whose name ends in `_test` | Sign-up, log-in, posting, the whole review workflow, voting, a person's own account, password resets, the privacy tools and account management answer what they should and refuse what they should not — and the activity log records who, from where and to what |
+| **List parity** | `scripts/check-shared-lists.mjs`, in CI | The lists kept on both sides (section 11) still match, and both copies of the rudeness filter give the same answers |
+| **Lint** | `npm run lint` in both apps, in CI, with no warnings allowed | Unused code, missing hook dependencies and the like never accumulate |
+| **API contract** | Postman collection (`backend/postman/`), run top to bottom — login first, which stores the token for every later request | Each endpoint, tried by hand |
 | **Integration smoke** | CI boots the API against a real Postgres and hits `/api/health` | Migrations apply, the server starts, the database is reachable |
-| **Build** | CI runs `npm run build` for the frontend and `docker build` for both images | Nothing is broken at the compile or packaging level |
+| **Build** | CI runs `npm run build` for the frontend and `docker build` for every image, development and production | Nothing is broken at the compile or packaging level |
 | **Manual matrix** | Run per slice, in two browsers — one signed in as an admin, one as a student | The workflow behaves end to end and both faces agree |
 
 ### The manual matrix
@@ -1180,16 +1194,10 @@ Run for any change that touches the workflow:
 2. **Unit tests for `data/workflow.js` derivations** — that every status in a
    `next` list exists; that `PUBLIC_STATUSES` and `ASSIGNABLE_KINDS` derive
    correctly.
-3. **Parity tests for the lists kept in two places** (section 11) — the
-   permission tables, the workflow lists and the two copies of the rudeness
-   filter are each knowingly duplicated, and each is a place a test should be
-   watching.
-4. **Supertest integration tests for the API** — that each admin route returns
-   404 for an account without the permission, that a suspended account is
-   refused, and that `/api/state` never carries an anonymous author to a
-   student.
-5. **React Testing Library tests for `SubmissionReview`** — the dialog every
+3. **React Testing Library tests for `SubmissionReview`** — the dialog every
    status change passes through.
+4. **Parity checks for the last three twin lists** (section 11) — the title
+   and message limits, the attachment rules and the storage categories.
 
 ---
 
@@ -1200,16 +1208,19 @@ Run for any change that touches the workflow:
 ```
    ┌──────────────────────┐     ┌────────────────────────────────┐
    │ frontend             │     │ backend                        │
-   │ node 20 · npm ci     │     │ node 20 · npm ci               │
-   │ npm run build        │     │ postgres:16 service container  │
-   │ CI=true (warnings    │     │ npm run db:migrate             │
-   │ fail the build)      │     │ npm start & wait-on /api/health│
+   │ node 24 · npm ci     │     │ node 24 · npm ci               │
+   │ npm run lint         │     │ postgres:16 service container  │
+   │ npm run build        │     │ npm run lint                   │
+   │                      │     │ check-shared-lists.mjs         │
+   │                      │     │ npm run db:migrate             │
+   │                      │     │ npm start & wait-on /api/health│
+   │                      │     │ npm test (the API tests)       │
    └──────────┬───────────┘     └───────────────┬────────────────┘
               └──────────┬──────────────────────┘
                          ▼
               ┌────────────────────────┐
               │ docker-build           │   needs: [frontend, backend]
-              │ builds both images     │
+              │ dev + production images│
               └────────────────────────┘
                          ▼
               ┌────────────────────────┐
@@ -1219,17 +1230,24 @@ Run for any change that touches the workflow:
 
 What each job is actually buying:
 
-- **frontend** — `CI: true` makes CRA treat warnings as errors, so an unused
-  import or a missing hook dependency fails the build rather than accumulating.
-- **backend** — this is the job that matters. It runs the migrations against a
-  *real* Postgres 16 service container with a `pg_isready` healthcheck (which
-  also fills in the six categories), boots the server, and curls `/api/health`. A schema change that does not
-  apply cleanly cannot reach `main`.
-- **docker-build** — proves the images build from a clean checkout, which is
+- **frontend** — `npm run lint` fails on any ESLint error or warning, so an
+  unused import or a missing hook dependency fails the job rather than
+  accumulating. (`frontend/.env` turns ESLint off inside the build itself, which
+  is why it is a step of its own.) Then the production build.
+- **backend** — this is the job that matters. It lints, checks the lists kept
+  on both sides still match (section 11), runs the migrations against a *real*
+  Postgres 16 service container with a `pg_isready` healthcheck (which also
+  fills in the six categories), boots the server and curls `/api/health`, then
+  runs the API tests against the same Postgres. A schema change that does not
+  apply cleanly, or a change that breaks a rule the tests check, cannot reach
+  `main`.
+- **docker-build** — proves every image builds from a clean checkout — the two
+  development images and the two production ones (`Dockerfile.prod`) — which is
   what catches a dependency that only exists on the developer's machine.
-- **deploy** — a documented stub, with the Vercel/Netlify and Docker→EC2 shapes
-  sketched in comments. It stays commented until hosting is decided, rather
-  than pretending to a deployment that does not happen.
+- **deploy** — a documented stub, with the Vercel/Netlify and
+  Docker-on-a-server shapes sketched in comments. It stays commented until
+  hosting is decided, rather than pretending to a deployment that does not
+  happen.
 
 ---
 
@@ -1259,25 +1277,28 @@ Two practices hold it together:
 
 ## 22. Release and deployment path
 
-Nothing has been deployed. Connecting the website to the API and hardening the
-server are done; what is left before real use:
+Nothing has been deployed. Connecting the website to the API, hardening the
+server and the production setup (`docker-compose.prod.yml`, GUIDE.md section
+3b) are done; what is left before real use:
 
 ```
-  1. BUILD       A production build of the website (`npm run build`), served
-                 by a web server - not the CRA dev server - with the API
-                 behind the same address at /api, or REACT_APP_API_URL set
-                 when building. The backend on `npm start`, not nodemon.
+  1. CONFIGURE   On the server, copy .env.production.example to .env:
+                 POSTGRES_PASSWORD, a real JWT_SECRET (openssl rand -hex 32)
+                 - the server refuses to start without one - APP_URL, the
+                 default administrator and the school's SMTP settings.
                  ↓
-  2. CONFIGURE   NODE_ENV=production. A real JWT_SECRET (openssl rand -hex 32)
-                 - the server refuses to start without one. CORS_ORIGIN if the
-                 website is on a different address; TRUST_PROXY=1 behind a
-                 reverse proxy. Managed Postgres with automated backups. TLS.
+  2. START       docker compose -f docker-compose.prod.yml up -d --build:
+                 the built website behind nginx, /api passed on to the API
+                 (NODE_ENV=production, runtime packages only), Postgres -
+                 with only the website published.
                  ↓
-  3. ADMIN       Set ADMIN_NAME, ADMIN_EMAIL and ADMIN_PASSWORD: the server
-                 creates the default administrator on its first start.
-                 Log in and change that password from the log-in page.
+  3. TLS         Put it behind HTTPS - the host's, or a proxy such as Caddy -
+                 and set TRUST_PROXY=2. Schedule database backups.
                  ↓
-  4. DEPLOY      Fill in the commented deploy job in ci.yml, if wanted.
+  4. ADMIN       Log in as the default administrator and change that
+                 password from the admin profile.
+                 ↓
+  5. DEPLOY      Fill in the commented deploy job in ci.yml, if wanted.
 ```
 
 ### Pre-production checklist
@@ -1291,8 +1312,13 @@ server are done; what is left before real use:
 - [x] Rate limiting on log-in and posting; security headers set
 - [x] Attachments checked server-side for type, size and contents
 - [x] The status and kind lists in the schema, the server and the website agree
+      — and CI fails if any shared list stops agreeing
+- [x] Automated API tests run in CI against a real Postgres
+- [x] A production setup: the built website behind nginx, the API without
+      development tools and not as root, the database unpublished
 - [ ] `JWT_SECRET` is a generated secret, set in the environment, not in git
-- [ ] `CORS_ORIGIN` names the real website only; `TRUST_PROXY` set if proxied
+- [ ] `APP_URL` is the real address (the production setup also makes it the
+      only `CORS_ORIGIN`); `TRUST_PROXY=2` if HTTPS is a proxy in front of nginx
 - [ ] `SMTP_*` set to the school's mail server and `APP_URL` to the website's
       address — then "Forgot password?" tried once for real
 - [ ] The default administrator's password set in `.env` only, and changed
@@ -1307,7 +1333,7 @@ server are done; what is left before real use:
 | # | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|---|
 | 1 | The default administrator's password is left as the one in the server's settings | Medium | **Critical** — the panel in the wrong hands | The password rule is enforced when it is created; change it after the first log-in (section 22); `make-admin` and the role controls to recover |
-| 2 | A list kept in two places drifts (section 11) | Medium | High — the server refuses what the website offers, or the other way round | Each file names its twin; parity tests (section 19, item 3) |
+| 2 | A list kept in two places drifts (section 11) | Low | High — the server refuses what the website offers, or the other way round | Each file names its twin; `scripts/check-shared-lists.mjs` fails CI when any list it covers differs (section 11 names the three it does not cover yet) |
 | 3 | Anonymous author identity leaked in an API response or export | Low | High — breaks the platform's core promise to students | Stripped in `/api/state` itself; identity columns opt-in on exports |
 | 4 | The only administrator loses their password | Low | High — locked out of the panel | "Forgot password?" emails a reset link; keep a second administrator; `npm run make-admin` on the server |
 | 5 | The database is lost | Low | **Critical** — every record, file and log entry | Managed Postgres with tested backups (section 22) |
@@ -1339,8 +1365,11 @@ server are done; what is left before real use:
 campusVoiceBox/
 ├── README.md                       what this is, how to start it
 ├── GUIDE.md                        what is built · how to run it · what is missing
-├── docker-compose.yml              db + backend + frontend, one command
-├── .github/workflows/ci.yml        CI: build · migrate · boot · docker build
+├── docker-compose.yml              db + backend + frontend, one command (development)
+├── docker-compose.prod.yml         the same for real use: nginx + API + db
+├── .env.production.example         the settings the production setup reads
+├── .github/workflows/ci.yml        CI: lint · lists · API tests · migrate · boot · builds
+├── scripts/check-shared-lists.mjs  fails if the two sides' lists differ
 │
 ├── docs/
 │   ├── SYSTEM-ARCHITECTURE.md      this document
@@ -1351,6 +1380,8 @@ campusVoiceBox/
 │
 ├── frontend/
 │   ├── Dockerfile                  dev image (CRA dev server)
+│   ├── Dockerfile.prod             production image: the built site, served by nginx
+│   ├── nginx/                      nginx's settings: /api to the backend, caching, headers
 │   ├── tailwind.config.js          brand palette + fade keyframes
 │   └── src/
 │       ├── App.js                  every route, and every guard
@@ -1382,7 +1413,9 @@ campusVoiceBox/
 │
 └── backend/
     ├── Dockerfile                  dev image (nodemon)
+    ├── Dockerfile.prod             production image: runtime packages only, not root
     ├── .env.example                every variable, documented
+    ├── test/api.test.js            the API tests (npm test)
     ├── postman/                    importable API collection
     └── src/
         ├── server.js · app.js
@@ -1398,7 +1431,9 @@ campusVoiceBox/
         │                           suggestionsController · accountController
         │                           privacyController
         └── routes/                 index · authRoutes · suggestionsRoutes
-                                    accountRoutes · privacyRoutes · adminRoutes
+            │                       accountRoutes · privacyRoutes
+            └── admin/              index (requireAuth for all) · users · posts
+                                    privacyRequests · activityLogs · helpers
 ```
 
 ---
@@ -1412,6 +1447,7 @@ campusVoiceBox/
 | Frontend (CRA dev server) | 3000 | http://localhost:3000 |
 | Backend (Express) | 4000 | http://localhost:4000/api/health |
 | PostgreSQL | 5432 | — |
+| Production (`docker-compose.prod.yml`): nginx — the only published port | `HTTP_PORT`, default 80 | the website, and the API at `/api` |
 
 **Backend environment variables** (`backend/.env.example`)
 
@@ -1460,9 +1496,9 @@ When something needs changing, this is the shortest path to the right file.
 | Export columns | `frontend/src/services/csv.js` |
 | Brand colours and animations | `frontend/tailwind.config.js` |
 | Table definitions and constraints | `backend/src/models/schema.sql` |
-| API routes and their permissions | `backend/src/routes/` — admin ones in `adminRoutes.js` |
+| API routes and their permissions | `backend/src/routes/` — admin ones in `routes/admin/` |
 | Policy versions, and the facts the school still has to confirm | `frontend/src/data/policies.js` (versions **also** in `backend/src/models/policies.js`) |
 | What the site keeps in the browser | `frontend/src/services/consent.js` |
 | The policy texts | `frontend/src/pages/legal/` |
-| Container topology | `docker-compose.yml` |
+| Container topology | `docker-compose.yml` (development), `docker-compose.prod.yml` (production) |
 | Pipeline | `.github/workflows/ci.yml` |

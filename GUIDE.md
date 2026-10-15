@@ -14,7 +14,8 @@ server talk to each other, and what is still left to do.
 | Project repo structure | `frontend/` and `backend/` as two independent apps, plus this guide at the root |
 | Tech stack chosen | React (frontend) + Node.js/Express (backend) + PostgreSQL (database) |
 | Folder structure & environment setup | `docker-compose.yml` brings up all three services with one command; `.env.example` files document every variable needed without Docker |
-| CI/CD pipeline skeleton | `.github/workflows/ci.yml` - installs both apps, runs backend migrations against a real Postgres service container, boots the API, and builds both Docker images on every push/PR |
+| CI/CD pipeline skeleton | `.github/workflows/ci.yml` - on every push/PR: lints both apps, checks the lists both apps keep still match, runs the API tests and the migrations against a real Postgres service container, boots the API, builds the website, and builds every Docker image, development and production (section 3) |
+| Production setup | `docker-compose.prod.yml` - the built website behind nginx, the API and the database, with nothing exposed but the website (section 3b) |
 
 > Your original requirements doc listed Supabase in the tech stack. What was actually built
 > uses **plain PostgreSQL + a custom Express API with JWTs** instead - a more standard "learn
@@ -133,6 +134,76 @@ docker compose exec backend npm run make-admin -- someone@school.edu.ph
 Sign in with it to manage the panel again. The promotion is written to the activity log as
 "Command line".
 
+### Checking a change
+
+Three checks run in CI on every push (`.github/workflows/ci.yml`). Run them yourself
+first:
+
+| Check | Command | What it proves |
+|---|---|---|
+| Lint | `npm run lint`, in `frontend/` and in `backend/` | No ESLint errors or warnings. `frontend/.env` turns ESLint off inside the dev server and the build, so this is where it runs |
+| The shared lists | `node scripts/check-shared-lists.mjs`, from the project folder, once the backend's packages are installed | Every list the website and the server both keep - statuses and moves, kinds, departments, categories, roles, policy versions, privacy request types, account fields, the password and email rules, the blocked words and the filter itself - still matches |
+| The API tests | `npm test`, in `backend/` - see below | The real server and database, driven through sign-up, posting, review, voting, the privacy tools, password resets and account management - checking what each answers *and* what the activity log records |
+
+The API tests (`backend/test/api.test.js`) wipe the database they run on and load
+`schema.sql` afresh, so they refuse to run unless its name ends in `_test`. With Docker
+running:
+
+```bash
+docker compose exec db createdb -U cvb_user campusvoicebox_test    # once
+docker compose exec -e PGDATABASE=campusvoicebox_test backend npm test
+```
+
+Without Docker, create a `campusvoicebox_test` database in your Postgres and run
+`npm test` in `backend/` with `PGDATABASE=campusvoicebox_test` and the other `PG*`
+settings pointing at it. Nothing is emailed: the tests catch the reset email themselves.
+
+---
+
+## 3b. Running it for real (production)
+
+`docker compose up` (section 2) is for development: dev servers, hot reload, the code
+mounted from this folder. `docker-compose.prod.yml` runs the same system the way a live
+site should:
+
+| Container | What runs | Reachable from |
+|---|---|---|
+| **web** | nginx serving the *built* website (`frontend/Dockerfile.prod`, `frontend/nginx/`), and passing `/api` on to the backend | Outside, on `HTTP_PORT` (80) |
+| **backend** | The API with only its runtime packages, `NODE_ENV=production`, as a non-root user (`backend/Dockerfile.prod`). It brings the database up to date at every start | nginx only |
+| **db** | Postgres 16, with a password of its own | The backend only |
+
+The website and the API share one address - nginx sends `/api/...` to the backend - so
+the browser never needs CORS, and the backend sees each visitor's own address through
+`TRUST_PROXY` for the rate limits and the activity log.
+
+On the server (any machine with Docker):
+
+1. Copy `.env.production.example` to `.env` beside `docker-compose.prod.yml` and fill it
+   in. Compose refuses to start without `POSTGRES_PASSWORD`, `JWT_SECRET` and `APP_URL`,
+   and names the one missing. Set `ADMIN_EMAIL` and `ADMIN_PASSWORD` for the first
+   administrator, and the `SMTP_*` settings so "Forgot password?" can send its link.
+2. Start it:
+   ```bash
+   docker compose -f docker-compose.prod.yml up -d --build
+   ```
+3. After changing the code, run the same command again: the code is inside the images, so
+   they have to be rebuilt.
+
+Its containers and its database volume are named `campusvoicebox-production`, apart from
+the development ones, so both can live on one computer.
+
+**What it does not do for you:**
+
+- **HTTPS.** nginx listens on plain HTTP. Put it behind whatever provides HTTPS - the
+  hosting platform, or a proxy such as Caddy or a load balancer with a certificate - and
+  set `TRUST_PROXY=2`, since that is a second proxy in front of the backend.
+- **Backups.** The database lives in a Docker volume. Back it up regularly, for example:
+  ```bash
+  docker compose -f docker-compose.prod.yml exec -T db pg_dump -U cvb_user campusvoicebox > backup.sql
+  ```
+- **Choosing the host.** Any server that runs Docker will do. The deploy job in `ci.yml`
+  stays an outline until one is chosen.
+
 ---
 
 ## 4. The fade-in animation
@@ -218,12 +289,12 @@ screenshots they use are in `docs/images/`.
 | Admin shell and sidebar | `frontend/src/components/admin/AdminLayout.jsx` |
 | Reusable table / modal / charts / badges | `frontend/src/components/admin/` |
 | Admin pages | `frontend/src/pages/admin/` |
-| Admin API | `backend/src/routes/adminRoutes.js` |
+| Admin API | `backend/src/routes/admin/` - one file per area: users, posts, privacy requests, the activity log |
 | The policy pages | `frontend/src/pages/legal/` and `frontend/src/components/PolicyPage.jsx` |
 | Policy versions, and the facts still to be confirmed | `frontend/src/data/policies.js` (and `backend/src/models/policies.js`) |
 | What the site stores in the browser, and the cookie choice | `frontend/src/services/consent.js`, `frontend/src/components/CookieConsent.jsx` |
 | A person's own privacy choices and rights | `frontend/src/components/PrivacyData.jsx`, `backend/src/controllers/privacyController.js` |
-| Handling privacy requests | `frontend/src/pages/admin/PrivacyRequests.jsx`, the privacy-request route in `backend/src/routes/adminRoutes.js` |
+| Handling privacy requests | `frontend/src/pages/admin/PrivacyRequests.jsx`, the privacy-request route in `backend/src/routes/admin/privacyRequests.js` |
 
 ### Adding things later
 
@@ -261,6 +332,9 @@ and both copies must change together:
   table and the cookie window list it from there. If it is optional, raise
   `COOKIE_CONSENT_VERSION` in both `policies.js` files, so everybody is asked
   again about what is now in that category.
+
+A copy changed on one side only is caught: `node scripts/check-shared-lists.mjs`
+compares every pair, and CI runs it on every push (section 3, "Checking a change").
 
 ### The moderation flow
 
@@ -392,7 +466,8 @@ on every device.
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` | backend | The mail server that sends "Forgot password?" links - for example the school's Google Workspace (an *app password* as `SMTP_PASS`). Left empty while developing, the email is printed in the server's console instead. Required in production; like `ADMIN_PASSWORD`, `SMTP_PASS` belongs only in your own `.env` |
 | `APP_URL` | backend | The website's address, which the emailed reset link points to (default `http://localhost:3000`). Set it in production |
 | `CORS_ORIGIN` | backend | The website's address(es), comma-separated, if the website is on a different address from the API |
-| `TRUST_PROXY` | backend | Set to `1` when a reverse proxy sits in front of the API, so the activity log and the rate limits see the visitor's address rather than the proxy's |
+| `TRUST_PROXY` | backend | Set to `1` when a reverse proxy sits in front of the API, so the activity log and the rate limits see the visitor's address rather than the proxy's. `docker-compose.prod.yml` sets `1` for its nginx; `2` when HTTPS is handled by another proxy in front of that |
+| `POSTGRES_PASSWORD`, `HTTP_PORT` | `docker-compose.prod.yml` | The production database's password (required), and the port the website is published on (default `80`) - see `.env.production.example` |
 | `NODE_ENV` | backend | `production` turns on the strict `JWT_SECRET` check |
 | `PORT` | backend | Default `4000` |
 | `REACT_APP_API_URL` | frontend, when it is **built** | The API's address. Left unset, a production build uses `/api` on the website's own address, and development uses `http://localhost:4000/api` |
@@ -403,8 +478,11 @@ on every device.
 
 ```
 campusvoicebox/
-├── docker-compose.yml          # brings up db + backend + frontend together
-├── .github/workflows/ci.yml    # CI/CD pipeline skeleton
+├── docker-compose.yml          # brings up db + backend + frontend together (development)
+├── docker-compose.prod.yml     # the same for real use: nginx + API + db (section 3b)
+├── .env.production.example     # the settings docker-compose.prod.yml reads
+├── .github/workflows/ci.yml    # CI: lint, shared lists, API tests, builds
+├── scripts/check-shared-lists.mjs  # fails if the frontend's and backend's lists differ
 ├── docs/                       # manuals, architecture, code walkthrough, screenshots
 ├── frontend/
 │   ├── src/
@@ -422,7 +500,10 @@ campusvoicebox/
 │   │                           # moderation.js (rudeness filter), attachments.js
 │   │                           # (photo shrinking), csv.js (exports), consent.js
 │   │                           # (browser storage and the cookie choice)
+│   ├── nginx/                  # the production web server's settings
 │   ├── tailwind.config.js
+│   ├── Dockerfile              # development image (React dev server)
+│   ├── Dockerfile.prod         # production image: the built site, served by nginx
 │   └── package.json
 └── backend/
     ├── src/
@@ -432,8 +513,11 @@ campusvoicebox/
     │   ├── middleware/         # auth.js (who may do what), terms.js, rateLimit.js, errorHandler.js
     │   ├── models/             # schema.sql, workflow, account rules, policies, files, moderation...
     │   └── routes/
+    │       └── admin/          # the admin API: users, posts, privacy requests, activity log
+    ├── test/api.test.js        # the API tests (npm test)
     ├── postman/CampusVoiceBox.postman_collection.json
-    ├── Dockerfile
+    ├── Dockerfile              # development image (nodemon)
+    ├── Dockerfile.prod         # production image: runtime packages only, not root
     └── package.json
 ```
 
@@ -449,10 +533,12 @@ Being upfront about scope, so this isn't oversold as more finished than it is:
   sent.
 - **Rate limits are counted in one server's memory.** Enough for one server; they reset when
   it restarts, and several servers behind a load balancer would each count separately.
-- **No automated test suite in the repository.** CI checks that both apps build, that the
-  migrations run against a real Postgres and that the API starts.
-- **The Docker setup is for development** (hot reload, no build optimisation). Running it
-  for real needs a production build of the website and the settings in section 5.
+- **The tests cover the API, not the screens.** `backend/test/` drives the real server and
+  database; nothing clicks through the website itself in a browser.
+- **Going live still needs a host, HTTPS and backups.** `docker-compose.prod.yml` runs the
+  whole system the production way (section 3b), but where it runs, the certificate in
+  front of it and the database backups are the school's to arrange, and the deploy job in
+  `ci.yml` is an outline until then.
 - **The policies are drafts.** They follow the principles of the Data Privacy Act of 2012
   (RA 10173) but do not claim compliance. The school must fill in the facts marked *To be
   confirmed* and have the parts marked *For legal review* checked by its lawyer or Data

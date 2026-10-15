@@ -1,4 +1,11 @@
 const { Pool } = require('pg');
+
+/*
+ * The settings in .env are loaded here, once, for the whole server. Every
+ * entry point - server.js (through app.js), migrate.js and make-admin.js -
+ * requires this file before anything reads process.env, so keep it that way
+ * when adding a setting that is read as a file loads.
+ */
 require('dotenv').config();
 
 /*
